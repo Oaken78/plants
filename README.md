@@ -11,6 +11,12 @@ weathered concrete, cauliflower-shaped foliage masses, white and yellow flowers,
 
 ## Run the demo
 
+**Live demo: <https://oaken78.github.io/plants/>.** It is redeployed by
+[.github/workflows/pages.yml](.github/workflows/pages.yml) on every push to `main`. A desktop browser with a
+dedicated GPU gives the smoothest flight.
+
+To run it locally instead:
+
 ```bash
 npm install
 ```
