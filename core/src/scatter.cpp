@@ -31,6 +31,17 @@ SurfaceSample SurfaceSampler::sample(Rng& rng) const {
     return s;
 }
 
+bool isEnclosed(const TriangleBvh& bvh, const Vec3& p) {
+    SurfaceHit h;
+    if (!bvh.raycast(p + kUp * 0.05f, kUp, 80.0f, h)) return false;  // open sky above: outside
+    int blocked = 0;
+    for (int k = 0; k < 8; ++k) {
+        float a = (k + 0.5f) * (2 * kPi / 8);
+        if (bvh.raycast(p + kUp * 0.3f, Vec3{std::cos(a), 0, std::sin(a)}, 40.0f, h)) ++blocked;
+    }
+    return blocked >= 7;
+}
+
 static bool tooClose(const std::vector<ClimberSeed>& seeds, const Vec3& p, float minDist) {
     for (const auto& s : seeds)
         if (length2(s.point - p) < minDist * minDist) return true;
@@ -54,7 +65,7 @@ std::vector<ClimberSeed> pickClimberSeeds(const TriangleBvh& bvh, const Params& 
         if (g.normal.y < 0.7f) continue;
         Vec3 root = s.point + s.normal * offset;
         root.y = g.point.y + 0.1f;
-        if (tooClose(seeds, root, 1.3f)) continue;
+        if (tooClose(seeds, root, 1.3f) || isEnclosed(bvh, root)) continue;
         seeds.push_back({root, s.normal, false});
     }
 
@@ -65,7 +76,7 @@ std::vector<ClimberSeed> pickClimberSeeds(const TriangleBvh& bvh, const Params& 
         SurfaceSample s = solid.sample(rng);
         if (s.normal.y < 0.85f || s.point.y < floorY + 1.2f) continue;
         Vec3 root = s.point + s.normal * offset;
-        if (tooClose(seeds, root, 1.6f)) continue;
+        if (tooClose(seeds, root, 1.6f) || isEnclosed(bvh, root)) continue;
         seeds.push_back({root, s.normal, true});
         ++roofPlaced;
     }
@@ -130,9 +141,9 @@ void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, cons
             if (!bvh.raycast(base + kUp * 1.0f, kDown, 2.0f, g, kMaskGround | kMaskSolid) || g.tag != kTagGround) continue;
             base = g.point;
         }
-        if (overlaps(placed, base, r) || nearTrunk(avoid, base, r)) continue;
+        if (overlaps(placed, base, r) || nearTrunk(avoid, base, r) || isEnclosed(bvh, base)) continue;
         Rng bushRng = rng.fork(uint32_t(1000 + placed.size()));
-        growBush(p, bushRng, base - kUp * 0.03f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], false), out);
+        growBush(p, bushRng, base - kUp * 0.03f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], false), out, &bvh);
         placed.push_back({base, r});
         ++placedGround;
     }
@@ -161,9 +172,9 @@ void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, cons
         }
         if (!supported) continue;
         float r = baseRadius * scale;
-        if (overlaps(placed, s.point, r) || nearTrunk(avoid, s.point, r)) continue;
+        if (overlaps(placed, s.point, r) || nearTrunk(avoid, s.point, r) || isEnclosed(bvh, s.point)) continue;
         Rng bushRng = rng.fork(uint32_t(5000 + placed.size()));
-        growBush(p, bushRng, s.point - kUp * 0.02f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], true), out);
+        growBush(p, bushRng, s.point - kUp * 0.02f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], true), out, &bvh);
         placed.push_back({s.point, r});
         ++placedRoof;
     }

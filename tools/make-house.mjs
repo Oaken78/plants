@@ -1,12 +1,15 @@
-// Generates the proof-of-concept host model: a weathered two-storey concrete house with an annex,
-// balcony, roof hut and water tank, in the style of the concept art. Writes web/assets/house.glb with
-// two meshes (House_LOD0 detailed, House_LOD1 for distance), plus web/assets/house-glb.js holding the same
-// bytes as base64 for the demo. Material names carry the growth tags:
+// Generates the host models in the style of the concept art:
+//   web/assets/house.glb   a weathered two-storey concrete house with an annex, balcony, roof hut and water tank
+//                          (House_LOD0 detailed, House_LOD1 for distance)
+//   web/assets/towers.glb  three tall apartment towers (TowerA 8 floors, TowerB 13 floors, TowerC 6 floors wide),
+//                          each as <name>_LOD0 and <name>_LOD1
+// Each .glb also gets a <name>-glb.js module holding the same bytes as base64, which the demo imports.
+// Material names carry the growth tags:
 // "window" and "door" are no-grow surfaces, everything else may be overgrown.
 //
 //   node tools/make-house.mjs
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PALETTE, hexToLinear } from '../web/js/palette.js';
 
@@ -83,7 +86,9 @@ class MeshBuilder {
 
 // A wall slab with rectangular openings. origin: bottom-left of the outer face seen from outside,
 // u: rightward along the face, n: outward normal. Openings get recessed glass/door panels, frames and sills.
-function wall(m, { origin, u, n, width, height, thickness = 0.25, openings = [], mat = 'concrete', detail = true }) {
+// frames: window frames and mullions; inner: the wall's inside face (towers skip both to stay light).
+function wall(m, { origin, u, n, width, height, thickness = 0.25, openings = [], mat = 'concrete', detail = true,
+  frames = true, inner = true }) {
   const P = (x, y, d) => add(add(add(origin, mul(u, x)), mul(UP, y)), mul(n, -d));
   const neg = mul(n, -1);
   const negU = mul(u, -1);
@@ -113,7 +118,7 @@ function wall(m, { origin, u, n, width, height, thickness = 0.25, openings = [],
       const [x0, x1, y0, y1] = [xs[i], xs[i + 1], ys[j], ys[j + 1]];
       const t = thickness;
       m.quad(mat, P(x0, y0, 0), P(x1, y0, 0), P(x1, y1, 0), P(x0, y1, 0), n);
-      m.quad(mat, P(x0, y0, t), P(x1, y0, t), P(x1, y1, t), P(x0, y1, t), neg);
+      if (inner) m.quad(mat, P(x0, y0, t), P(x1, y0, t), P(x1, y1, t), P(x0, y1, t), neg);
       if (!filled(i - 1, j)) m.quad(mat, P(x0, y0, 0), P(x0, y0, t), P(x0, y1, t), P(x0, y1, 0), negU);
       if (!filled(i + 1, j)) m.quad(mat, P(x1, y0, 0), P(x1, y0, t), P(x1, y1, t), P(x1, y1, 0), u);
       if (!filled(i, j - 1)) m.quad(mat, P(x0, y0, 0), P(x1, y0, 0), P(x1, y0, t), P(x0, y0, t), mul(UP, -1));
@@ -132,12 +137,16 @@ function wall(m, { origin, u, n, width, height, thickness = 0.25, openings = [],
       m.box(frameMat, [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2])],
         [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])]);
     };
-    bar(o.x, o.y + o.h - f, o.x + o.w, o.y + o.h);
-    bar(o.x, o.y, o.x + f, o.y + o.h - f);
-    bar(o.x + o.w - f, o.y, o.x + o.w, o.y + o.h - f);
+    if (frames) {
+      bar(o.x, o.y + o.h - f, o.x + o.w, o.y + o.h);
+      bar(o.x, o.y, o.x + f, o.y + o.h - f);
+      bar(o.x + o.w - f, o.y, o.x + o.w, o.y + o.h - f);
+    }
     if (!o.door) {
-      bar(o.x + f, o.y, o.x + o.w - f, o.y + f);
-      bar(o.x + o.w / 2 - f / 2, o.y + f, o.x + o.w / 2 + f / 2, o.y + o.h - f); // mullion
+      if (frames) {
+        bar(o.x + f, o.y, o.x + o.w - f, o.y + f);
+        bar(o.x + o.w / 2 - f / 2, o.y + f, o.x + o.w / 2 + f / 2, o.y + o.h - f); // mullion
+      }
       // Sill: a concrete ledge that sticks out under the window.
       const a = P(o.x - 0.1, o.y - 0.08, 0.05), b = P(o.x + o.w + 0.1, o.y, -0.11);
       m.box('concrete_dark', [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2])],
@@ -237,6 +246,82 @@ function buildHouse(detail) {
   return m;
 }
 
+// Tall apartment towers. Every floor has a concrete band (ledges for plants to catch on), the front gets rusty
+// balconies on alternate floors, and the roof carries a parapet, stair hut, water tank and antenna.
+const TOWERS = [
+  { name: 'TowerA', floors: 8, width: 10, depth: 10, cols: [3, 3], balconyEvery: 2 },
+  { name: 'TowerB', floors: 13, width: 8, depth: 12, cols: [2, 3], balconyEvery: 3 },
+  { name: 'TowerC', floors: 6, width: 14, depth: 9, cols: [4, 3], balconyEvery: 2 },
+];
+
+function buildTower(spec, detail) {
+  const m = new MeshBuilder();
+  const FH = 3.1, H = spec.floors * FH, W = spec.width, D = spec.depth, hw = W / 2, hd = D / 2, t = 0.3;
+  const openingsFor = (length, cols, front) => {
+    const out = [];
+    const spacing = length / cols, w = Math.min(1.5, spacing * 0.55);
+    for (let f = 0; f < spec.floors; f++) {
+      for (let c = 0; c < cols; c++) {
+        const x = (c + 0.5) * spacing - w / 2;
+        if (front && f === 0 && c === Math.floor(cols / 2)) out.push({ x: x - 0.1, y: 0.3, w: w + 0.2, h: 2.4, door: true });
+        else out.push({ x, y: f * FH + 0.95, w, h: 1.45 });
+      }
+    }
+    return out;
+  };
+  const common = { height: H, thickness: t, detail, frames: false, inner: false };
+  m.box('concrete_dark', [-hw - 0.1, -1.5, -hd - 0.1], [hw + 0.1, 0.3, hd + 0.1]);
+  wall(m, { ...common, origin: [-hw, 0, hd], u: [1, 0, 0], n: [0, 0, 1], width: W, openings: openingsFor(W, spec.cols[0], true) });
+  wall(m, { ...common, origin: [hw, 0, -hd], u: [-1, 0, 0], n: [0, 0, -1], width: W, openings: openingsFor(W, spec.cols[0], false) });
+  wall(m, { ...common, origin: [hw, 0, hd - t], u: [0, 0, -1], n: [1, 0, 0], width: D - 2 * t, openings: openingsFor(D - 2 * t, spec.cols[1], false) });
+  wall(m, { ...common, origin: [-hw, 0, -hd + t], u: [0, 0, 1], n: [-1, 0, 0], width: D - 2 * t, openings: openingsFor(D - 2 * t, spec.cols[1], false) });
+  m.box('concrete', [-hw + t, H - 0.25, -hd + t], [hw - t, H, hd - t]); // roof slab
+
+  // Floor bands.
+  for (let f = 1; f < spec.floors; f++) {
+    if (!detail && f % 3) continue;
+    const y0 = f * FH - 0.12, y1 = f * FH + 0.06, o = 0.08;
+    m.box('trim', [-hw - o, y0, hd], [hw + o, y1, hd + o]);
+    m.box('trim', [-hw - o, y0, -hd - o], [hw + o, y1, -hd]);
+    m.box('trim', [hw, y0, -hd], [hw + o, y1, hd]);
+    m.box('trim', [-hw - o, y0, -hd], [-hw, y1, hd]);
+  }
+  // Balconies on the front.
+  const spacing = W / spec.cols[0];
+  for (let f = 1; f < spec.floors; f += spec.balconyEvery) {
+    for (let c = 0; c < spec.cols[0]; c++) {
+      if ((c + f) % 2) continue;
+      const cx = -hw + (c + 0.5) * spacing, bw = Math.min(2.4, spacing * 0.8) / 2, y = f * FH;
+      m.box('concrete', [cx - bw, y - 0.15, hd], [cx + bw, y + 0.1, hd + 1.0]);
+      if (detail) {
+        m.box('rust', [cx - bw, y + 0.9, hd + 0.94], [cx + bw, y + 0.96, hd + 1.0]);
+        for (let x = cx - bw; x <= cx + bw + 0.01; x += (2 * bw) / 5) m.box('rust', [x - 0.02, y + 0.1, hd + 0.95], [x + 0.02, y + 0.92, hd + 0.99]);
+        m.box('rust', [cx - bw, y + 0.1, hd + 0.05], [cx - bw + 0.04, y + 0.96, hd + 1.0]);
+        m.box('rust', [cx + bw - 0.04, y + 0.1, hd + 0.05], [cx + bw, y + 0.96, hd + 1.0]);
+      } else {
+        m.box('rust', [cx - bw, y + 0.1, hd + 0.95], [cx + bw, y + 0.96, hd + 1.0]);
+      }
+    }
+  }
+  // Roof: parapet, cap, stair hut, water tank and an antenna.
+  const ph = 0.9;
+  m.box('concrete', [-hw, H, hd - 0.25], [hw, H + ph, hd], { skipBottom: true });
+  m.box('concrete', [-hw, H, -hd], [hw, H + ph, -hd + 0.25], { skipBottom: true });
+  m.box('concrete', [hw - 0.25, H, -hd + 0.25], [hw, H + ph, hd - 0.25], { skipBottom: true });
+  m.box('concrete', [-hw, H, -hd + 0.25], [-hw + 0.25, H + ph, hd - 0.25], { skipBottom: true });
+  m.box('trim', [-hw - 0.05, H + ph, -hd - 0.05], [hw + 0.05, H + ph + 0.08, hd + 0.05]);
+  const hutX = -hw + 1.0, hutZ = -hd + 1.0;
+  m.box('concrete', [hutX, H, hutZ], [hutX + 2.2, H + 2.6, hutZ + 2.4], { skipBottom: true });
+  m.box('trim', [hutX - 0.1, H + 2.6, hutZ - 0.1], [hutX + 2.3, H + 2.7, hutZ + 2.5]);
+  m.quad('door', [hutX + 2.21, H + 0.05, hutZ + 0.6], [hutX + 2.21, H + 0.05, hutZ + 1.6], [hutX + 2.21, H + 2.2, hutZ + 1.6],
+    [hutX + 2.21, H + 2.2, hutZ + 0.6], [1, 0, 0]);
+  m.cylinder('rust', [hw - 2.0, H + 0.9, hd - 2.2], 0.9, 1.7, detail ? 14 : 6);
+  for (const [dx, dz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]])
+    m.box('rust', [hw - 2.0 + dx - 0.06, H, hd - 2.2 + dz - 0.06], [hw - 2.0 + dx + 0.06, H + 0.9, hd - 2.2 + dz + 0.06]);
+  m.box('rust', [hutX + 0.4, H + 2.7, hutZ + 0.4], [hutX + 0.5, H + (detail ? 6.5 : 6.0), hutZ + 0.5]);
+  return m;
+}
+
 // --- glb writer ----------------------------------------------------------------------------------
 
 function writeGlb(path, meshes) {
@@ -315,21 +400,26 @@ function writeGlb(path, meshes) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, out);
   // The same bytes as a JS module: the demo imports this, so it also works on hosts that do not serve .glb files.
-  const module = `// Generated by tools/make-house.mjs from house.glb. Do not edit.\nexport const HOUSE_GLB_BASE64 =\n  '${Buffer.from(out).toString('base64')}';\n`;
+  const module = `// Generated by tools/make-house.mjs from ${basename(path)}. Do not edit.\nexport const GLB_BASE64 =\n  '${Buffer.from(out).toString('base64')}';\n`;
   writeFileSync(path.replace(/\.glb$/, '-glb.js'), module);
   return total;
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const outPath = join(root, 'web', 'assets', 'house.glb');
-const meshes = [
-  { name: 'House_LOD0', builder: buildHouse(true) },
-  { name: 'House_LOD1', builder: buildHouse(false) },
+const outputs = [
+  { file: 'house.glb', meshes: [{ name: 'House_LOD0', builder: buildHouse(true) }, { name: 'House_LOD1', builder: buildHouse(false) }] },
+  { file: 'towers.glb', meshes: TOWERS.flatMap((t) => [
+    { name: `${t.name}_LOD0`, builder: buildTower(t, true) },
+    { name: `${t.name}_LOD1`, builder: buildTower(t, false) },
+  ]) },
 ];
-const bytes = writeGlb(outPath, meshes);
-for (const m of meshes) {
-  let tris = 0;
-  for (const part of m.builder.parts.values()) tris += part.idx.length / 3;
-  console.log(`${m.name}: ${tris} triangles`);
+for (const { file, meshes } of outputs) {
+  const outPath = join(root, 'web', 'assets', file);
+  const bytes = writeGlb(outPath, meshes);
+  for (const m of meshes) {
+    let tris = 0;
+    for (const part of m.builder.parts.values()) tris += part.idx.length / 3;
+    console.log(`${m.name}: ${tris} triangles`);
+  }
+  console.log(`wrote ${outPath} (${(bytes / 1024).toFixed(1)} KiB)`);
 }
-console.log(`wrote ${outPath} (${(bytes / 1024).toFixed(1)} KiB)`);

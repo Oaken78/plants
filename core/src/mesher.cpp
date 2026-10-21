@@ -90,9 +90,17 @@ const LeafTemplate& leafTemplate(int shape, bool simple) {
         makeTemplate({{0, 0}, {0, 0.55f}}, {{0.2f, 0.12f}, {0.3f, 0.38f}, {0.25f, 0.68f}, {0.11f, 0.9f}}, {0, 1});
     static const LeafTemplate bushSimple = makeTemplate({{0, 0}}, {{0.28f, 0.3f}, {0.2f, 0.72f}}, {0, 1});
     static const LeafTemplate petal = makeTemplate({{0, 0}}, {{0.28f, 0.35f}, {0.22f, 0.78f}}, {0, 1});
+    // Oak: obovate with four rounded lobes a side, widest toward the tip.
+    static const LeafTemplate oak = makeTemplate(
+        {{0, 0}, {0, 0.35f}, {0, 0.7f}},
+        {{0.1f, 0.06f}, {0.22f, 0.14f}, {0.14f, 0.24f}, {0.28f, 0.36f}, {0.18f, 0.46f}, {0.32f, 0.58f}, {0.2f, 0.68f},
+         {0.3f, 0.8f}, {0.14f, 0.92f}},
+        {0, 1});
+    static const LeafTemplate oakSimple = makeTemplate({{0, 0}}, {{0.2f, 0.2f}, {0.3f, 0.5f}, {0.28f, 0.78f}}, {0, 1});
     switch (shape) {
         case kShapeIvy: return simple ? ivySimple : ivy;
         case kShapeBush: return simple ? bushSimple : bush;
+        case kShapeOak: return simple ? oakSimple : oak;
         default: return petal;
     }
 }
@@ -181,15 +189,20 @@ void emitLeaf(const Leaf& l, const LeafTemplate& t, float scale, MeshBuffers& m)
     for (uint32_t idx : t.tris) m.indices.push_back(first + idx);
 }
 
-void emitTube(const PlantSet& s, const Stem& stem, int baseSides, int stride, float minRadius, float phase, MeshBuffers& m) {
+void emitTube(const PlantSet& s, const std::vector<uint8_t>& hasChild, const Stem& stem, int baseSides, int stride,
+              float minRadius, float phase, MeshBuffers& m) {
     std::vector<int> ids;
     for (size_t k = 0; k < stem.nodes.size(); k += stride) ids.push_back(stem.nodes[k]);
     if (ids.back() != stem.nodes.back()) ids.push_back(stem.nodes.back());
     // Cut the stem where it gets thinner than this LOD can show.
     size_t keep = 0;
     while (keep < ids.size() && (keep == 0 || s.nodes[ids[keep]].radius >= minRadius)) ++keep;
+    const bool cut = keep < ids.size();
     ids.resize(keep);
     if (ids.size() < 2) return;
+    // Only real tips (and stems this LOD cuts short) taper to a point. A stem that ends where others continue,
+    // like the trunk at its fork, keeps its full radius so there is no pinch at the junction.
+    const bool taper = cut || !hasChild[ids.back()];
     // Thick trunks and roots get twice the sides so they stay round up close.
     const int sides = baseSides * (s.nodes[ids[1]].radius > 0.06f ? 2 : 1);
     const float value = 0.9f + 0.2f * phase;
@@ -203,7 +216,7 @@ void emitTube(const PlantSet& s, const Stem& stem, int baseSides, int stride, fl
         Vec3 t = normalize(b - a, kUp);
         u = normalize(projectOnPlane(u, t), anyPerpendicular(t));  // parallel transport
         Vec3 v = cross(t, u);
-        float r = i + 1 == ids.size() ? node.radius * 0.35f : node.radius;
+        float r = (taper && i + 1 == ids.size()) ? node.radius * 0.35f : node.radius;
         uint32_t ring = uint32_t(m.vertexCount());
         for (int k = 0; k < sides; ++k) {
             float ang = 2 * kPi * k / sides;
@@ -361,8 +374,11 @@ void buildLod(const PlantSet& set, const Params& p, int lod, MeshBuffers& out) {
     out.clear();
     const LodConfig cfg = configFor(lod, p);
     if (cfg.tubeSides > 0) {
+        std::vector<uint8_t> hasChild(set.nodes.size(), 0);
+        for (const StemNode& n : set.nodes)
+            if (n.parent >= 0) hasChild[n.parent] = 1;
         for (size_t i = 0; i < set.stems.size(); ++i)
-            emitTube(set, set.stems[i], cfg.tubeSides, cfg.tubeStride, cfg.minStemRadius, hash3(int(i), 7, 3), out);
+            emitTube(set, hasChild, set.stems[i], cfg.tubeSides, cfg.tubeStride, cfg.minStemRadius, hash3(int(i), 7, 3), out);
     }
     if (cfg.leafKeep > 0) {
         for (const Leaf& l : set.leaves)

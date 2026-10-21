@@ -48,6 +48,9 @@ export const PALETTE = {
   barkLight: '#a38d72',
   bark: '#7d6a56',
   barkShadow: '#5b5262',
+  oakLight: '#9cc35a',
+  oak: '#3b7a3d',
+  oakShadow: '#20453e',
 
   // House
   concreteDark: '#b9ae99',

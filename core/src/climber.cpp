@@ -306,6 +306,9 @@ void growClimbers(const TriangleBvh& bvh, const Params& p, Rng& rng, const std::
                 leaf.group = 0;
                 leaf.mat = kMatIvyLeaf;
                 leaf.shape = kShapeIvy;
+                Vec3 tip = leaf.pos + leaf.forward * (leaf.size * 1.1f);
+                SurfaceHit th;
+                if (bvh.closestPoint(tip, 0.3f, th, kMaskSolid | kMaskNoGrow) && dot(tip - th.point, th.normal) < 0.0f) continue;
                 out.leaves.push_back(leaf);
 
                 if (rng.chance(flowerChance)) {

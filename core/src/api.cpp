@@ -80,10 +80,10 @@ int plants_make_bush(PlantsContext* ctx, uint32_t seed, int style, float scale) 
     return int(ctx->set.leaves.size());
 }
 
-int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size) {
+int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size, int species, float crowding) {
     ctx->set = PlantSet{};
     Rng rng(seed);
-    growTree(ctx->params, rng, nullptr, Vec3{0, 0, 0}, size, ctx->set);
+    growTree(ctx->params, rng, nullptr, Vec3{0, 0, 0}, size, species % kTreeSpeciesCount, crowding, ctx->set);
     buildAllLods(ctx);
     return int(ctx->set.leaves.size());
 }

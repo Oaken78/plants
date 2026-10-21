@@ -18,9 +18,10 @@ enum Material : uint8_t {
     kMatFlowerCenter = 6,
     kMatTreeLeaf = 7,
     kMatBark = 8,
+    kMatOakLeaf = 9,
 };
 
-enum LeafShape : uint8_t { kShapeIvy = 0, kShapeBush = 1, kShapePetal = 2 };
+enum LeafShape : uint8_t { kShapeIvy = 0, kShapeBush = 1, kShapePetal = 2, kShapeOak = 3 };
 
 struct StemNode {
     Vec3 pos;

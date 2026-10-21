@@ -9,10 +9,19 @@ export const WORLD = {
   heroClear: 70,       // no town houses this close to the hero house
   townRadius: 2700,
   houseVariants: 4,    // town variants (the hero house is variant 0)
+  towerTypes: 3,       // TowerA, TowerB, TowerC; their variants follow the house variants
 };
+const towerVariant = (type) => 1 + WORLD.houseVariants + type;
 
-// House footprint in local space (main block + annex + balcony), metres.
-const FOOTPRINT = { x0: -7.7, x1: 4.2, z0: -3.2, z1: 4.3 };
+// Footprints in local space, metres: the house (main block, annex, balcony) and each tower (with balconies).
+const FOOTPRINTS = {
+  house: { x0: -7.7, x1: 4.2, z0: -3.2, z1: 4.3 },
+  tower: [
+    { x0: -5.1, x1: 5.1, z0: -5.1, z1: 6.1 },
+    { x0: -4.1, x1: 4.1, z0: -6.1, z1: 7.1 },
+    { x0: -7.1, x1: 7.1, z0: -4.6, z1: 5.6 },
+  ],
+};
 
 // ---------------------------------------------------------------- noise
 
@@ -72,10 +81,15 @@ export function latticeSite(i, j) {
     const village = fbm(x * 0.0042 + 50, z * 0.0042, 3);
     const density = smoothstep(0.34, 0.58, village) * 0.9 + 0.08;
     if (hash2(i, j, 3) < density) {
+      // Village cores mix in tall towers.
+      const tower = village > 0.55 && hash2(i, j, 6) < 0.4;
+      const type = Math.floor(hash2(i, j, 7) * WORLD.towerTypes);
       site = {
         x, z, y: rawHeight(x, z),
         yaw: hash2(i, j, 4) * Math.PI * 2,
-        variant: 1 + Math.floor(hash2(i, j, 5) * WORLD.houseVariants),
+        variant: tower ? towerVariant(type) : 1 + Math.floor(hash2(i, j, 5) * WORLD.houseVariants),
+        footprint: tower ? FOOTPRINTS.tower[type] : FOOTPRINTS.house,
+        plateau: tower ? 24 : 19,
       };
     }
   }
@@ -83,10 +97,21 @@ export function latticeSite(i, j) {
   return site;
 }
 
-export const HERO_SITE = { x: 0, z: 0, y: 0, yaw: 0, variant: 0 };
+export const HERO_SITE = { x: 0, z: 0, y: 0, yaw: 0, variant: 0, footprint: FOOTPRINTS.house, plateau: 19 };
+
+// Three towers just outside the hero house's clearing, so they are in view from the start.
+export const SHOWCASE_TOWERS = [
+  { x: -46, z: -42, yaw: 0.35, type: 0 },
+  { x: 38, z: -58, yaw: -0.25, type: 1 },
+  { x: 62, z: 28, yaw: 1.2, type: 2 },
+].map((t) => ({
+  x: t.x, z: t.z, y: rawHeight(t.x, t.z), yaw: t.yaw,
+  variant: towerVariant(t.type), footprint: FOOTPRINTS.tower[t.type], plateau: 24,
+}));
 
 function* sitesAround(x, z) {
   yield HERO_SITE;
+  yield* SHOWCASE_TOWERS;
   const s = WORLD.siteSpacing;
   const i0 = Math.floor(x / s), j0 = Math.floor(z / s);
   for (let j = j0 - 1; j <= j0 + 1; j++) {
@@ -102,7 +127,7 @@ export function terrainHeight(x, z) {
   let h = rawHeight(x, z);
   for (const site of sitesAround(x, z)) {
     const d = Math.hypot(x - site.x, z - site.z);
-    const w = 1 - smoothstep(11, 19, d);
+    const w = 1 - smoothstep(site.plateau - 8, site.plateau, d);
     if (w > 0) h += (site.y - h) * w;
   }
   return h;
@@ -116,7 +141,8 @@ export function houseProximity(x, z, margin = 0) {
     nearest = Math.min(nearest, Math.hypot(dx, dz));
     const c = Math.cos(site.yaw), s = Math.sin(site.yaw);
     const lx = c * dx - s * dz, lz = s * dx + c * dz; // inverse of the shader's rotY
-    if (lx > FOOTPRINT.x0 - margin && lx < FOOTPRINT.x1 + margin && lz > FOOTPRINT.z0 - margin && lz < FOOTPRINT.z1 + margin) inside = true;
+    const f = site.footprint;
+    if (lx > f.x0 - margin && lx < f.x1 + margin && lz > f.z0 - margin && lz < f.z1 + margin) inside = true;
   }
   return { nearest, inside };
 }
@@ -126,6 +152,8 @@ export function houseProximity(x, z, margin = 0) {
 export function houseCell(cx, cz) {
   const out = [];
   if (cx === 0 && cz === 0) out.push({ ...HERO_SITE, scale: 1 });
+  const s = WORLD.siteSpacing;
+  for (const t of SHOWCASE_TOWERS) if (Math.floor(t.x / s) === cx && Math.floor(t.z / s) === cz) out.push({ ...t, scale: 1 });
   // House layer cells use the same spacing as the site lattice, so cell (i, j) owns site (i, j).
   const site = latticeSite(cx, cz);
   if (site) out.push({ x: site.x, y: site.y, z: site.z, yaw: site.yaw, scale: 1, variant: site.variant });
@@ -153,23 +181,58 @@ export function makeBushCell(variantCount, cellSize) {
   };
 }
 
-// Trees gather in groves and line the edges of villages; sizes come from the variant (small to large).
-export function makeTreeCell(variantCount, cellSize) {
+// Candidate tree spots of one cell: groves, plus lone oaks out in the open meadows. Pure function of the cell, so
+// neighbouring cells can be inspected without generating them.
+function treeSpots(cx, cz, cellSize) {
+  const spots = [];
+  const x0 = cx * cellSize, z0 = cz * cellSize;
+  const grove = fbm((x0 + cellSize / 2) * 0.006 - 13, (z0 + cellSize / 2) * 0.006 + 4, 3);
+  const count = Math.floor(hash2(cx, cz, 31) * 7 * smoothstep(0.45, 0.68, grove)) + (hash2(cx, cz, 32) < 0.25 ? 1 : 0);
+  for (let k = 0; k < count; k++) {
+    spots.push({
+      k,
+      x: x0 + hash2(cx * 53 + k, cz, 33) * cellSize,
+      z: z0 + hash2(cx, cz * 53 + k, 34) * cellSize,
+      oak: hash2(cx - 7 * k, cz + k, 38) < 0.3,
+    });
+  }
+  if (grove < 0.45 && hash2(cx, cz, 39) < 0.12) {
+    spots.push({ k: 99, x: x0 + hash2(cx, cz, 40) * cellSize, z: z0 + hash2(cx, cz, 41) * cellSize, oak: true });
+  }
+  return spots;
+}
+
+// Trees gather in groves and line the edges of villages. kinds = { round, oakBase, oakSizes, oakForms }: round
+// variants come first, then oaks ordered by size and form (broad, medium, tall). An oak's form follows how crowded
+// its spot is by other trees and by houses, like a real oak competing for light.
+export function makeTreeCell(kinds, cellSize) {
   return (cx, cz) => {
     const out = [];
-    const x0 = cx * cellSize, z0 = cz * cellSize;
-    const grove = fbm((x0 + cellSize / 2) * 0.006 - 13, (z0 + cellSize / 2) * 0.006 + 4, 3);
-    const count = Math.floor(hash2(cx, cz, 31) * 7 * smoothstep(0.45, 0.68, grove)) + (hash2(cx, cz, 32) < 0.25 ? 1 : 0);
-    for (let k = 0; k < count; k++) {
-      const x = x0 + hash2(cx * 53 + k, cz, 33) * cellSize;
-      const z = z0 + hash2(cx, cz * 53 + k, 34) * cellSize;
-      if (houseProximity(x, z).nearest < 15) continue; // houses grow their own trees
-      if (Math.hypot(x, z) < 24) continue;            // keep the hero house in the open
+    const near = [];
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) near.push(...treeSpots(cx + dx, cz + dz, cellSize));
+    for (const s of treeSpots(cx, cz, cellSize)) {
+      const house = houseProximity(s.x, s.z).nearest;
+      if (house < 15) continue;                    // houses grow their own trees
+      if (Math.hypot(s.x, s.z) < 24) continue;     // keep the hero house in the open
+      let variant;
+      if (s.oak) {
+        let trees = 0;
+        for (const o of near) {
+          const d = Math.hypot(o.x - s.x, o.z - s.z);
+          if (d > 0.01 && d < 14) trees += 1 - d / 14;
+        }
+        const crowding = Math.min(1, trees * 0.5 + Math.max(0, (30 - house) / 30) * 0.9);
+        const form = Math.min(kinds.oakForms - 1, Math.floor(crowding * kinds.oakForms));
+        const size = Math.floor(hash2(cx + s.k, cz - 3 * s.k, 42) * kinds.oakSizes);
+        variant = kinds.oakBase + size * kinds.oakForms + form;
+      } else {
+        variant = Math.floor(hash2(cx + 11 * s.k, cz, 37) * kinds.round);
+      }
       out.push({
-        x, z, y: terrainHeight(x, z) - 0.1,
-        yaw: hash2(cx + 3 * k, cz - k, 35) * Math.PI * 2,
-        scale: 0.85 + hash2(cx - k, cz + 2 * k, 36) * 0.35,
-        variant: Math.floor(hash2(cx + 11 * k, cz, 37) * variantCount),
+        x: s.x, z: s.z, y: terrainHeight(s.x, s.z) - 0.1,
+        yaw: hash2(cx + 3 * s.k, cz - s.k, 35) * Math.PI * 2,
+        scale: 0.85 + hash2(cx - s.k, cz + 2 * s.k, 36) * 0.35,
+        variant,
       });
     }
     return out;

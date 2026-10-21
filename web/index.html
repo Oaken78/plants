@@ -31,7 +31,7 @@
     .row { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin: 4px 0; }
     .row input[type=range] { width: 100%; }
     .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; margin: 6px 0; }
-    .views { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 6px 0; }
+    .views { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 6px 0; }
     .views button { padding: 4px 6px; font-size: 12px; }
     button { font: inherit; background: var(--ink); color: var(--paper); border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
     button.alt { background: var(--rust); }
@@ -91,6 +91,8 @@
       <button id="view-4" data-view="Digit4">Aerial</button>
       <button id="view-5" data-view="Digit5">Village</button>
       <button id="view-6" data-view="Digit6">Village above</button>
+      <button id="view-7" data-view="Digit7">Towers</button>
+      <button id="view-8" data-view="Digit8">Lone oak</button>
     </div>
     <div class="row"><span>Growth</span><input id="grow" type="range" min="0" max="1" step="0.001" value="1"></div>
     <div class="row"><span>Wind</span><input id="wind" type="range" min="0" max="3" step="0.01" value="1"></div>
@@ -119,7 +121,7 @@
   <div id="help" class="panel">
     <span class="keys">
       Click to fly (or drag to look) &middot; <b>W</b><b>A</b><b>S</b><b>D</b> move &middot; <b>Space</b>/<b>Q</b> up/down &middot; <b>Shift</b> boost &middot; wheel speed: <span id="speed"></span> m/s<br>
-      <b>1</b>-<b>6</b> viewpoints &middot; <b>L</b> LOD colours &middot; <b>O</b> outlines &middot; <b>G</b> grow &middot; <b>R</b> new seed &middot; <b>H</b> hide panels
+      <b>1</b>-<b>8</b> viewpoints &middot; <b>L</b> LOD colours &middot; <b>O</b> outlines &middot; <b>G</b> grow &middot; <b>R</b> new seed &middot; <b>H</b> hide panels
     </span>
     <span class="touch-hint">Drag to look, hold two fingers to fly forward.</span>
   </div>

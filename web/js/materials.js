@@ -34,13 +34,14 @@ export const shared = {
 };
 
 // Foliage palette indexed by the core's material id (core/include/plants/plant_set.h: Material).
-//   0 stem, 1 ivy leaf, 2 bush leaf, 3 grass, 4 white flower, 5 yellow flower, 6 flower centre, 7 tree leaf, 8 bark
+//   0 stem, 1 ivy leaf, 2 bush leaf, 3 grass, 4 white flower, 5 yellow flower, 6 flower centre, 7 tree leaf, 8 bark,
+//   9 oak leaf
 const FOLIAGE_LIGHT = ['#8e7a58', PALETTE.ivyLight, PALETTE.bushLight, PALETTE.grassLight, '#fffdf6', '#ffe27e', '#f4b450',
-  PALETTE.treeLight, PALETTE.barkLight];
+  PALETTE.treeLight, PALETTE.barkLight, PALETTE.oakLight];
 const FOLIAGE_BASE = [PALETTE.stem, PALETTE.ivy, PALETTE.bush, PALETTE.grass, PALETTE.flowerWhite, PALETTE.flowerYellow,
-  PALETTE.flowerCenter, PALETTE.tree, PALETTE.bark];
+  PALETTE.flowerCenter, PALETTE.tree, PALETTE.bark, PALETTE.oak];
 const FOLIAGE_SHADE = ['#46404e', PALETTE.ivyShadow, PALETTE.bushShadow, PALETTE.grassShadow, '#a9b6d6', '#b49a6c', '#a0674a',
-  PALETTE.treeShadow, PALETTE.barkShadow];
+  PALETTE.treeShadow, PALETTE.barkShadow, PALETTE.oakShadow];
 
 const foliageUniforms = {
   uMatLight: { value: FOLIAGE_LIGHT.map(lin) },
@@ -171,9 +172,9 @@ ${COMMON}
 ${DITHER}
 ${SHADOW_SAMPLE}
 ${LIGHTING}
-uniform vec3 uMatLight[9];
-uniform vec3 uMatBase[9];
-uniform vec3 uMatShade[9];
+uniform vec3 uMatLight[10];
+uniform vec3 uMatBase[10];
+uniform vec3 uMatShade[10];
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec4 vShade;
@@ -203,7 +204,7 @@ void main() {
 
   // Back-lit leaves glow (sub-surface look of sunlit foliage).
   vec3 v = normalize(uCameraPos - vWorldPos);
-  if ((mat >= 1 && mat <= 3) || mat == 7) {
+  if ((mat >= 1 && mat <= 3) || mat == 7 || mat == 9) {
     float trans = pow(max(dot(-v, uSunDir), 0.0), 5.0) * (1.0 - max(dot(n, uSunDir), 0.0));
     col += lightCol * trans * 0.35;
   }

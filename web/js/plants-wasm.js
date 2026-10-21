@@ -66,8 +66,9 @@ export class PlantGenerator {
     this.m._plants_make_bush(this.ctx, seed >>> 0, style, scale);
     return this.collect();
   }
-  makeTree(seed, size) {
-    this.m._plants_make_tree(this.ctx, seed >>> 0, size);
+  // species: 0 round, 1 oak. crowding: 0 = standing alone (broad), 1 = among trees or houses (tall).
+  makeTree(seed, size, species = 0, crowding = 0.5) {
+    this.m._plants_make_tree(this.ctx, seed >>> 0, size, species, crowding);
     return this.collect();
   }
   makeGrass(seed) {

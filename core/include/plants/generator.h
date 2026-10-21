@@ -29,6 +29,10 @@ private:
     float total_ = 0;
 };
 
+// True when p is inside the host: there is something overhead and nearly every horizontal direction is blocked.
+// Plants never start in such places (the floor under a house, the inside of a roof hut); roots may still crawl in.
+bool isEnclosed(const TriangleBvh& bvh, const Vec3& p);
+
 struct ClimberSeed {
     Vec3 point;
     Vec3 normal;
@@ -44,8 +48,15 @@ void growClimbers(const TriangleBvh& bvh, const Params& p, Rng& rng, const std::
 
 enum BushStyle { kBushRound = 0, kBushTall = 1, kBushSpreading = 2, kBushFlowering = 3, kBushStyleCount = 4 };
 
-// One bush rooted at base, growing along up. Returns the group id it used.
-int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& up, float scale, int style, PlantSet& out);
+// One bush rooted at base, growing along up. With a host, its clumps keep out of walls and no leaf or flower ends
+// up behind one. Returns the group id it used.
+int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& up, float scale, int style, PlantSet& out,
+             const TriangleBvh* host = nullptr);
+
+// Removes leaves and flowers from index firstLeaf / firstFlower on that sit behind a host surface as seen from the
+// plant's own axis (base + up * height): foliage that pushed through a wall.
+void dropFoliageBehindWalls(const TriangleBvh& host, const Vec3& base, const Vec3& up, size_t firstLeaf,
+                            size_t firstFlower, PlantSet& out);
 
 // Leaves over the outer surface of the clumps [firstClump, end): the shared foliage of bushes and trees.
 // aoFrom/aoTo are heights along up where the foliage starts and ends (darker and earlier at the bottom).
@@ -56,12 +67,20 @@ void coverClumpsWithLeaves(Rng& rng, PlantSet& out, size_t firstClump, const Vec
 // Bushes on the host: on the ground patch near walls and on roofs/ledges, keeping clear of tree trunks.
 void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, const std::vector<Vec3>& avoid, PlantSet& out);
 
+enum TreeSpecies { kTreeRound = 0, kTreeOak = 1, kTreeSpeciesCount = 2 };
+
 // A tree rooted at base. With a host, it leans toward open sky, fits under overhangs, and its roots follow the
 // host's surfaces; roots of a tree less than tree.rootReach above the ground climb down to reach it.
-// size scales tree.height (about 0.4 small, 1 medium, 1.8 large). Returns the foliage group id.
-int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, PlantSet& out);
+// size scales tree.height or oak.height (about 0.4 small, 1 medium, 1.8 large). crowding is 0 for a tree standing
+// alone and 1 for one hemmed in by trees or walls: crowded trees grow taller and narrower. Returns the group id.
+int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, int species, float crowding,
+             PlantSet& out);
 
-// Trees on the host: on roofs and ledges (preferring spots near an edge) and on the ground patch.
+// How hemmed in a tree at base would be (0..1), from nearby walls of the host and the other trunks.
+float estimateCrowding(const TriangleBvh& bvh, const Vec3& base, const std::vector<Vec3>& trunks);
+
+// Trees on the host: on roofs and ledges (preferring spots near an edge) and on the ground patch; tree.oakShare of
+// them are oaks. Each tree's crowding is estimated from the walls and the trees placed before it.
 // Appends each trunk position to trunks.
 void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out, std::vector<Vec3>& trunks);
 

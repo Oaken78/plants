@@ -1,15 +1,15 @@
 # Overgrowth: procedural anime plants
 
-A procedural plant generator that grows **climbing plants (ivy)**, **bushes** and **trees** (plus grass tufts
-and wild flowers) on arbitrary 3D models. Trees can grow on buildings too, sending their roots down the walls to
-the ground. It is styled after "The Last Signal" concept sheet: lush ivy draping over
+A procedural plant generator that grows **climbing plants (ivy)**, **bushes** and **trees**, including **oaks**
+(plus grass tufts and wild flowers), on arbitrary 3D models. Trees can grow on buildings too, sending their roots
+down the walls to the ground. It is styled after "The Last Signal" concept sheet: lush ivy draping over
 weathered concrete, cauliflower-shaped foliage masses, white and yellow flowers, blue-tinted shadows and ink lines.
 
 - **Core:** portable C++17 with no dependencies, compiled to WebAssembly today. It is written to become a Godot
   GDExtension later; see [docs/godot-port.md](docs/godot-port.md).
-- **Tech demo:** a three.js fly-through with the proof-of-concept house, a streamed town of hundreds of overgrown
-  houses, groves of trees in nine sizes, thousands of bushes and a grass meadow, using a four-level LOD scheme with
-  dithered cross-fades.
+- **Tech demo:** a three.js fly-through with the proof-of-concept house and three tall apartment towers. Around them
+  streams a town of hundreds of overgrown houses and towers, groves of round trees and oaks, thousands of bushes and
+  a grass meadow, all on a four-level LOD scheme with dithered cross-fades.
 
 ## Run the demo
 
@@ -27,7 +27,7 @@ npm install
 node tools/serve.mjs
 ```
 
-Open <http://localhost:8080/web/>. The WebAssembly build (`web/build/`) and the house model (`web/assets/house.glb`)
+Open <http://localhost:8080/web/>. The WebAssembly build (`web/build/`) and the models (`web/assets/*.glb`)
 are checked in, so no compiler is needed just to run it.
 
 ### Controls
@@ -39,7 +39,7 @@ are checked in, so no compiler is needed just to run it.
 | Space / E, Q / C | Up, down |
 | Shift | 5x speed |
 | Mouse wheel | Cruise speed (1 to 400 m/s) |
-| 1 to 6 | Viewpoints: ivy close-up, annex and sign, hero house, aerial, village at ground level, village from above |
+| 1 to 8 | Viewpoints: ivy close-up, annex and sign, hero house, aerial, village at ground level, village from above, towers, lone oak |
 | L | Colour every mesh by LOD (red 0, yellow 1, green 2, blue 3) |
 | O | Ink outlines on/off |
 | G | Replay the growth animation |
@@ -70,7 +70,7 @@ Then build from PowerShell. This writes `web/build/plants.{js,wasm}`, then compi
 ./tools/build.ps1          # -Debug for assertions and symbols, -SkipTests to skip the tests
 ```
 
-To regenerate the house model after editing [tools/make-house.mjs](tools/make-house.mjs):
+To regenerate the house and tower models after editing [tools/make-house.mjs](tools/make-house.mjs):
 
 ```bash
 node tools/make-house.mjs
@@ -86,8 +86,9 @@ node tools/make-artifact-page.mjs <out>/index.html
 ```
 
 This drops the document wrapper that the host adds itself and loads three.js from jsDelivr instead of
-`node_modules`. Publish `index.html` with `js/*.js`, `build/plants.{js,wasm}` and `assets/house-glb.js` beside it.
-The house loads from `house-glb.js`, a base64 copy of `house.glb`, because the host does not serve `.glb` files.
+`node_modules`. Publish `index.html` with `js/*.js`, `build/plants.{js,wasm}`, `assets/house-glb.js` and
+`assets/towers-glb.js` beside it. The models load from these base64 copies of the `.glb` files because the host
+does not serve `.glb` files.
 
 ## Layout
 
@@ -102,7 +103,7 @@ core/                 portable C++ generator (no dependencies)
   src/
     climber.cpp       ivy growth
     bush.cpp          bushes, grass tufts, and the leaf cover shared with trees
-    tree.cpp          trees: crown, pipe-model skeleton, ground-seeking roots
+    tree.cpp          trees and oaks: crown, pipe-model skeleton, crowding, ground-seeking roots
     scatter.cpp       where plants start on a host mesh
     shading.cpp       "cloud" normals and occlusion from clumps
     mesher.cpp        PlantSet -> LOD 0..3 meshes
@@ -117,9 +118,10 @@ web/
   js/world.js         terrain, town layout, scatter rules (pure functions of position)
   js/flycam.js, js/main.js
   assets/house.glb    proof-of-concept host model (House_LOD0, House_LOD1)
+  assets/towers.glb   three apartment towers, 6 to 13 floors (TowerA/B/C, each _LOD0 and _LOD1)
 tools/
   build.ps1           wasm build and tests
-  make-house.mjs      generates house.glb
+  make-house.mjs      generates house.glb and towers.glb (plus their -glb.js copies)
   serve.mjs           static server
 ```
 
@@ -167,6 +169,24 @@ walls. They lean toward open sky and shrink to fit under overhangs. Their roots 
 Roots heading for the ground fork into child roots that also seek it, so they fan out into a fig-like net over the
 wall. Thin rootlets web the surface between them, and `tree.rootBranching` sets how much of both. Free-standing
 trees get a forked root flare.
+
+**Oaks.** Oaks are a second species. They have lobed leaves and a deeper green, a thicker trunk with a stronger
+flare, gnarled branches, and they grow about twice as tall (`oak.height`, 15 m at size 1). Like real oaks, their
+form depends on how crowded they are:
+- **Alone:** a short trunk forks low into long, near-horizontal limbs under a crown wider than the tree is tall.
+  A lone oak at size 1 is about 24 m wide and 15 m tall.
+- **Crowded:** among other trees or near buildings, an oak grows taller (up to +30%) with a high clear trunk and a
+  narrow crown. At size 1 that is about 19 m tall and 16 m wide.
+
+Round trees respond the same way, but only a little. Crowding is a number from 0 to 1. On a host it is measured
+from the walls and the other trunks around each tree. In the demo world it comes from nearby trees and houses, and
+each oak picks one of three pre-grown forms (broad, medium, tall). Giant crowns are capped at `tree.maxLeaves`
+leaves, which are made bigger to keep the coverage.
+
+**Nothing starts inside a building.** A tree, bush or ivy root is never placed where something is overhead and
+nearly every horizontal direction is blocked: the floor under a house, the inside of a roof hut. Bushes leaning on
+a wall are squashed against it instead of growing through it, and foliage that would end up behind a wall is
+dropped. Only roots may slip inside, since they follow the surfaces.
 
 **Grass.** Tufts of curved, tapered blades with up-facing normals, so they shade like the ground they stand on, plus
 wild flowers on stalks.

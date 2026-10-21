@@ -1,9 +1,12 @@
-// Trees.
+// Trees: round broadleaf trees and oaks.
 //
 // The crown comes first: overlapping clumps in a wide rounded envelope (the same cloud-shaded foliage as the
 // bushes, so trees read as soft anime masses). The skeleton is then built to carry it: a slightly curved trunk to a
 // fork, a few limbs that each serve the clumps in one direction, a branch into every clump and twigs inside it.
 // Branch thickness follows the pipe model (radius ~ sqrt of the foliage a branch carries).
+// Oaks are bigger and gnarlier, and their form follows how crowded they are: alone they grow a short trunk, a low
+// fork and long near-horizontal limbs under a crown wider than the tree is tall; near trees or walls they grow tall
+// with a high clear trunk and a narrow crown.
 //
 // Roots follow the host's surfaces. On a roof or ledge less than tree.rootReach above the ground they steer toward
 // the ground: across the roof, up and over parapets, down the walls, and into the soil. On the way they fork into
@@ -41,8 +44,11 @@ struct Skeleton {
     }
     float& w(int node) { return weight[node - first]; }
 
+    std::vector<int> lastBranch;  // nodes of the most recent branch() call, start node first
+
     // A gently curved bark branch from an existing node to `to`; returns its end node.
-    int branch(int from, const Vec3& to, int segments, const Vec3& bend, Rng& rng) {
+    // jitter displaces the inner nodes by that fraction of the length (gnarled oaks use more).
+    int branch(int from, const Vec3& to, int segments, const Vec3& bend, float jitter, Rng& rng) {
         Stem stem;
         stem.mat = kMatBark;
         stem.nodes.push_back(from);
@@ -52,10 +58,11 @@ struct Skeleton {
         for (int s = 1; s <= segments; ++s) {
             float t = float(s) / segments;
             Vec3 pos = lerp(a, to, t) + bend * std::sin(t * kPi);
-            if (s < segments) pos += rng.inUnitSphere() * (len * 0.03f);
+            if (s < segments) pos += rng.inUnitSphere() * (len * jitter);
             prev = add(pos, kUp, prev);
             stem.nodes.push_back(prev);
         }
+        lastBranch = stem.nodes;
         out.stems.push_back(stem);
         return prev;
     }
@@ -254,25 +261,98 @@ void growRoots(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& b
 
 }  // namespace
 
-int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, PlantSet& out) {
+namespace {
+
+// Everything that differs between species. Crowding (0 = standing alone, 1 = hemmed in by trees or walls) makes
+// trees taller and narrower, the way real trees compete for light; oaks respond strongly, round trees a little.
+struct TreeShape {
+    float H, R, Rv, forkH, trunkR, flare, jitter, wobble;
+    int clumps;
+    float clumpMin, clumpMax, elevMin, elevMax;
+    int limbs;           // 0 = derive from the clump count
+    float limbReach;     // how far limbs reach toward their clumps before branching (0..1)
+    int trunkSegs, limbSegs;
+    uint8_t leafMat, leafShape;
+    float leafSize, leafDensity;
+};
+
+TreeShape shapeFor(const Params& p, Rng& rng, int species, float size, float crowding) {
+    const float c = saturate(crowding);
+    TreeShape s;
+    if (species == kTreeOak) {
+        s.H = p[kParamOakHeight] * size * rng.range(0.85f, 1.15f) * lerpf(0.9f, 1.3f, c);
+        s.R = s.H * lerpf(0.78f, 0.36f, c) * rng.range(0.9f, 1.1f);  // alone: crown wider than the tree is tall
+        s.Rv = s.R * lerpf(0.55f, 0.95f, c);
+        s.forkH = s.H * lerpf(rng.range(0.16f, 0.24f), rng.range(0.38f, 0.48f), c);
+        s.trunkR = s.H * p[kParamOakTrunk] * rng.range(0.9f, 1.1f) * lerpf(1.15f, 0.85f, c);
+        s.flare = 1.0f;
+        s.jitter = 0.07f;
+        s.wobble = 0.035f;
+        s.clumps = std::max(8, std::min(36, int(p[kParamTreeClumps] * 1.7f * (0.7f + 0.3f * size) + 0.5f)));
+        s.clumpMin = 0.26f;
+        s.clumpMax = 0.38f;
+        s.elevMin = -0.4f;
+        s.elevMax = 0.55f;
+        s.limbs = int(lerpf(6.0f, 3.0f, c) + 0.5f);
+        s.limbReach = lerpf(0.8f, 0.55f, c);
+        s.trunkSegs = 7;
+        s.limbSegs = 6;
+        s.leafMat = kMatOakLeaf;
+        s.leafShape = kShapeOak;
+        s.leafSize = p[kParamOakLeafSize] * (0.8f + 0.2f * std::min(s.H / 7.0f, 3.0f));
+        s.leafDensity = p[kParamOakLeafDensity];
+    } else {
+        s.H = p[kParamTreeHeight] * size * rng.range(0.85f, 1.15f) * lerpf(0.95f, 1.12f, c);
+        s.R = s.H * p[kParamTreeCanopy] * rng.range(0.85f, 1.15f) * lerpf(1.08f, 0.82f, c);
+        s.Rv = s.R * 0.75f;
+        s.forkH = s.H * rng.range(0.26f, 0.38f);
+        s.trunkR = s.H * p[kParamTreeTrunk] * rng.range(0.85f, 1.15f);
+        s.flare = 0.6f;
+        s.jitter = 0.03f;
+        s.wobble = 0.025f;
+        s.clumps = std::max(4, std::min(26, int(p[kParamTreeClumps] * (0.55f + 0.45f * size) + 0.5f)));
+        s.clumpMin = 0.34f;
+        s.clumpMax = 0.5f;
+        s.elevMin = -0.55f;
+        s.elevMax = 0.65f;
+        s.limbs = 0;
+        s.limbReach = 0.6f;
+        s.trunkSegs = 6;
+        s.limbSegs = 4;
+        s.leafMat = kMatTreeLeaf;
+        s.leafShape = kShapeBush;
+        s.leafSize = p[kParamTreeLeafSize] * (0.8f + 0.3f * std::min(size, 2.0f));
+        s.leafDensity = p[kParamTreeLeafDensity];
+    }
+    s.trunkR = std::max(0.03f, s.trunkR);
+    return s;
+}
+
+}  // namespace
+
+int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, int species, float crowding,
+             PlantSet& out) {
     const int group = out.nextGroup++;
     ++out.treeCount;
-    float H = p[kParamTreeHeight] * size * rng.range(0.85f, 1.15f);
+    TreeShape s = shapeFor(p, rng, species, size, crowding);
     if (host) {
-        // Fit under overhangs.
+        // Fit under overhangs, keeping the proportions.
         SurfaceHit h;
-        if (host->raycast(base + kUp * 0.3f, kUp, H * 1.15f, h, kMaskSolid | kMaskNoGrow))
-            H = std::max(1.2f, (h.distance + 0.3f) * 0.85f);
+        if (host->raycast(base + kUp * 0.3f, kUp, s.H * 1.15f, h, kMaskSolid | kMaskNoGrow)) {
+            float k = std::max(1.2f, (h.distance + 0.3f) * 0.85f) / s.H;
+            s.H *= k;
+            s.R *= k;
+            s.Rv *= k;
+            s.forkH *= k;
+            s.trunkR = std::max(0.03f, s.trunkR * k);
+        }
     }
+    const float H = s.H, R = s.R, Rv = s.Rv, forkH = s.forkH, trunkR = s.trunkR;
     const float sizeFactor = H / 7.0f;
     Vec3 lean = openSky(host, base, std::max(3.0f, H * 0.6f)) * p[kParamTreeLean];
     if (length(lean) > 0.45f) lean = normalize(lean) * 0.45f;
     const Vec3 axis = normalize(kUp + lean + projectOnPlane(rng.unitVector(), kUp) * 0.08f);
     const Frame fr = makeFrame(axis, anyPerpendicular(axis));
-    const float R = H * p[kParamTreeCanopy] * rng.range(0.85f, 1.15f);
-    const float Rv = R * 0.75f;
-    const float trunkR = std::max(0.03f, H * p[kParamTreeTrunk] * rng.range(0.85f, 1.15f));
-    const float forkH = H * rng.range(0.26f, 0.38f);
     const Vec3 crown = base + axis * (H - Rv * 1.0f);
     const float hue = rng.range(-0.45f, 0.45f), value = rng.range(0.92f, 1.08f), phase = rng.uniform();
     const float flexScale = std::min(2.0f, 0.6f + 0.4f * sizeFactor);
@@ -291,23 +371,22 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
         c.radii = {r, r * 0.9f, r};
         c.axis = axis;
         c.group = group;
-        c.mat = kMatTreeLeaf;
+        c.mat = s.leafMat;
         c.hue = hue + rng.range(-0.15f, 0.15f);
         c.value = value;
         c.flex = (0.03f + 0.05f * saturate(dot(pos - base, axis) / H)) * flexScale;
         c.phase = phase + rng.range(0.0f, 0.2f);
         out.clumps.push_back(c);
     };
-    addClump(crown + axis * (Rv * 0.42f), R * 0.52f);
-    int clumpCount = int(p[kParamTreeClumps] * (0.55f + 0.45f * size) + 0.5f);
-    clumpCount = std::max(4, std::min(26, clumpCount));
+    addClump(crown + axis * (Rv * 0.42f), R * (species == kTreeOak ? 0.42f : 0.52f));
     float ang = rng.range(0.0f, 2 * kPi);
-    for (int i = 1; i < clumpCount; ++i) {
+    for (int i = 1; i < s.clumps; ++i) {
         ang += 2.39996f + rng.range(-0.35f, 0.35f);
-        float elev = rng.range(-0.55f, 0.65f);
-        float r = R * rng.range(0.34f, 0.5f);
-        Vec3 pos = crown + fr.side * (std::cos(ang) * std::cos(elev) * R * 0.7f) + fr.normal * (std::sin(elev) * Rv * 0.72f) +
-                   fr.forward * (std::sin(ang) * std::cos(elev) * R * 0.7f);
+        float elev = rng.range(s.elevMin, s.elevMax);
+        float r = R * rng.range(s.clumpMin, s.clumpMax);
+        float reach = rng.range(0.55f, 0.75f);
+        Vec3 pos = crown + fr.side * (std::cos(ang) * std::cos(elev) * R * reach) + fr.normal * (std::sin(elev) * Rv * 0.72f) +
+                   fr.forward * (std::sin(ang) * std::cos(elev) * R * reach);
         float minH = forkH + r * 0.7f;
         float hh = dot(pos - base, axis);
         if (hh < minH) pos += axis * (minH - hh);
@@ -322,9 +401,9 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
     trunk.nodes.push_back(root);
     const float phi = rng.range(0.0f, 2 * kPi);
     int prev = root;
-    for (int s = 1; s <= 6; ++s) {
-        float t = s / 6.0f;
-        Vec3 wobble = (fr.side * std::cos(phi + t * 2.2f) + fr.forward * std::sin(phi + t * 2.2f)) * (H * 0.025f * std::sin(t * kPi));
+    for (int seg = 1; seg <= s.trunkSegs; ++seg) {
+        float t = float(seg) / s.trunkSegs;
+        Vec3 wobble = (fr.side * std::cos(phi + t * 2.2f) + fr.forward * std::sin(phi + t * 2.2f)) * (H * s.wobble * std::sin(t * kPi));
         prev = sk.add(base + axis * (forkH * t) + wobble, axis, prev);
         trunk.nodes.push_back(prev);
     }
@@ -335,11 +414,12 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
     auto twigs = [&](int from, const Clump& c) {
         for (int k = 0; k < 3; ++k) {
             Vec3 d = normalize(rng.unitVector() + kUp * 0.5f);
-            int e = sk.branch(from, c.center + d * (c.radii.x * 0.8f), 2, Vec3{}, rng);
+            int e = sk.branch(from, c.center + d * (c.radii.x * 0.8f), 2, Vec3{}, s.jitter, rng);
             sk.w(e) += c.radii.x * c.radii.x * 0.05f;
         }
     };
-    // Limbs: ring clumps sorted by direction around the trunk, split into a few contiguous groups.
+    // Limbs: ring clumps sorted by direction around the trunk, split into a few contiguous groups. Each clump is
+    // fed by a branch from the point of its limb nearest to it, so long limbs branch along their length.
     std::vector<int> ring;
     for (size_t ci = firstClump + 1; ci < out.clumps.size(); ++ci) ring.push_back(int(ci));
     auto azimuth = [&](int ci) {
@@ -348,24 +428,32 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
     };
     std::sort(ring.begin(), ring.end(), [&](int a, int b) { return azimuth(a) < azimuth(b); });
     std::rotate(ring.begin(), ring.begin() + rng.rangeInt(0, int(ring.size()) - 1), ring.end());
-    int limbs = std::max(1, std::min(std::min(5, int(ring.size())), int(ring.size() / 3.5f + 0.5f)));
+    int limbs = s.limbs > 0 ? s.limbs : int(ring.size() / 3.5f + 0.5f);
+    limbs = std::max(1, std::min(std::min(7, int(ring.size())), limbs));
     for (int l = 0; l < limbs; ++l) {
         size_t b0 = ring.size() * l / limbs, b1 = ring.size() * (l + 1) / limbs;
         Vec3 centroid;
         for (size_t i = b0; i < b1; ++i) centroid += out.clumps[ring[i]].center;
         centroid = centroid / float(b1 - b0);
-        Vec3 limbEnd = lerp(forkPos, centroid, 0.6f) + axis * (R * 0.08f);
-        int limb = sk.branch(fork, limbEnd, 4, axis * (R * 0.12f), rng);
+        Vec3 limbEnd = lerp(forkPos, centroid, s.limbReach) + axis * (R * 0.06f);
+        sk.branch(fork, limbEnd, s.limbSegs, axis * (R * 0.1f), s.jitter, rng);
+        const std::vector<int> limbNodes = sk.lastBranch;
         for (size_t i = b0; i < b1; ++i) {
             const Clump c = out.clumps[ring[i]];
-            int e = sk.branch(limb, lerp(limbEnd, c.center, 0.88f), 3, axis * (c.radii.x * 0.15f), rng);
+            int from = limbNodes.back();
+            float best = 1e30f;
+            for (size_t k = limbNodes.size() / 2; k < limbNodes.size(); ++k) {
+                float d2 = length2(out.nodes[limbNodes[k]].pos - c.center);
+                if (d2 < best) { best = d2; from = limbNodes[k]; }
+            }
+            int e = sk.branch(from, lerp(out.nodes[from].pos, c.center, 0.88f), 3, axis * (c.radii.x * 0.15f), s.jitter, rng);
             sk.w(e) += c.radii.x * c.radii.x;
             twigs(e, c);
         }
     }
     {
         const Clump c = out.clumps[firstClump];
-        int e = sk.branch(fork, lerp(forkPos, c.center, 0.9f), 4, Vec3{}, rng);
+        int e = sk.branch(fork, lerp(forkPos, c.center, 0.9f), s.limbSegs, Vec3{}, s.jitter, rng);
         sk.w(e) += c.radii.x * c.radii.x;
         twigs(e, c);
     }
@@ -379,24 +467,34 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
     const float total = std::max(1e-4f, sk.weight[0]);
     float maxPath = 1e-3f;
     for (float d : sk.path) maxPath = std::max(maxPath, d);
+    const float flareH = std::min(H * 0.12f, forkH * 0.6f);
     for (size_t i = sk.first; i < end; ++i) {
         StemNode& node = out.nodes[i];
         float h = dot(node.pos - base, axis);
         node.radius = std::max(0.006f, trunkR * std::sqrt(sk.weight[i - sk.first] / total));
-        if (h < H * 0.12f) node.radius *= 1.0f + 0.6f * (1.0f - h / (H * 0.12f)) * (1.0f - h / (H * 0.12f));
+        if (h < flareH) node.radius *= 1.0f + s.flare * (1.0f - h / flareH) * (1.0f - h / flareH);
         float t = sk.path[i - sk.first] / maxPath;
         node.birth = 0.05f + 0.5f * t;
         node.flex = 0.07f * t * t * flexScale;
     }
 
-    // Foliage on the crown.
-    float crownBottom = H;
-    for (size_t ci = firstClump; ci < out.clumps.size(); ++ci)
-        crownBottom = std::min(crownBottom, dot(out.clumps[ci].center - base, axis) - out.clumps[ci].radii.x * 0.9f);
+    // Foliage on the crown. Very large crowns get fewer, bigger leaves so a tree stays within tree.maxLeaves.
+    float crownBottom = H, area = 0;
+    for (size_t ci = firstClump; ci < out.clumps.size(); ++ci) {
+        const Clump& c = out.clumps[ci];
+        crownBottom = std::min(crownBottom, dot(c.center - base, axis) - c.radii.x * 0.9f);
+        area += 4 * kPi * c.radii.x * c.radii.x * 0.8f * 0.45f;  // roughly the exposed part of each clump
+    }
+    float leafSize = s.leafSize, density = s.leafDensity;
+    const float expected = area * density;
+    if (expected > p[kParamTreeMaxLeaves]) {
+        float k = p[kParamTreeMaxLeaves] / expected;
+        density *= k;
+        leafSize /= std::sqrt(k);
+    }
     const size_t firstLeaf = out.leaves.size();
-    coverClumpsWithLeaves(rng, out, firstClump, base, axis, crownBottom, H,
-                          p[kParamTreeLeafSize] * (0.8f + 0.3f * std::min(size, 2.0f)), p[kParamTreeLeafDensity],
-                          kMatTreeLeaf, kShapeBush, group, 0.55f);
+    coverClumpsWithLeaves(rng, out, firstClump, base, axis, crownBottom, H, leafSize, density, s.leafMat, s.leafShape,
+                          group, 0.55f);
     if (host) {
         // Drop leaves that ended up on the far side of a wall from the trunk.
         size_t kept = firstLeaf;
@@ -416,8 +514,28 @@ int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& bas
     return group;
 }
 
+float estimateCrowding(const TriangleBvh& bvh, const Vec3& base, const std::vector<Vec3>& trunks) {
+    // Walls: rays around the tree at two heights, weighted by how close they hit.
+    const float reach = 9.0f;
+    float blocked = 0;
+    for (int k = 0; k < 12; ++k) {
+        float a = k * (2 * kPi / 12);
+        Vec3 d{std::cos(a), 0, std::sin(a)};
+        for (float h : {1.5f, 4.0f}) {
+            SurfaceHit hit;
+            if (bvh.raycast(base + kUp * h, d, reach, hit, kMaskSolid | kMaskNoGrow)) blocked += 1.0f - hit.distance / reach;
+        }
+    }
+    float walls = saturate(blocked / 24.0f * 2.5f);
+    // Other trees.
+    float neighbours = 0;
+    for (const Vec3& t : trunks) neighbours += std::max(0.0f, 1.0f - length(projectOnPlane(t - base, kUp)) / 10.0f);
+    return saturate(std::max(walls, neighbours * 0.6f));
+}
+
 void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out, std::vector<Vec3>& trunks) {
     const float floorY = bvh.bounds().lo.y;
+    const float oakShare = p[kParamTreeOakShare];
     auto spaced = [&](const Vec3& q, float m) {
         for (const Vec3& t : trunks)
             if (length2(projectOnPlane(t - q, kUp)) < m * m) return false;
@@ -441,9 +559,13 @@ void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, Plant
             nearEdge = !bvh.raycast(s.point + Vec3{std::cos(a) * 1.8f, 0.4f, std::sin(a) * 1.8f}, kDown, 1.0f, g, kMaskSolid);
         }
         if (!nearEdge && !rng.chance(0.2f)) continue;
-        if (!spaced(s.point, 3.5f)) continue;
+        if (!spaced(s.point, 3.5f) || isEnclosed(bvh, s.point)) continue;
+        // Oaks are rarer up here and start smaller (they are much bigger trees).
+        bool oak = rng.chance(oakShare * 0.5f);
+        float size = oak ? rng.range(0.3f, 0.5f) : rng.range(0.35f, 0.75f);
+        float crowding = estimateCrowding(bvh, s.point, trunks);
         Rng treeRng = rng.fork(uint32_t(7000 + placed));
-        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, rng.range(0.35f, 0.75f), out);
+        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, size, oak ? kTreeOak : kTreeRound, crowding, out);
         trunks.push_back(s.point);
         ++placed;
     }
@@ -455,14 +577,17 @@ void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, Plant
     for (int attempt = 0; !ground.empty() && attempt < wantedGround * 300 && placedGround < wantedGround; ++attempt) {
         SurfaceSample s = ground.sample(rng);
         if (s.normal.y < 0.7f) continue;
-        float size = rng.range(0.7f, 1.3f);
-        float crownR = p[kParamTreeHeight] * size * p[kParamTreeCanopy];
+        bool oak = rng.chance(oakShare);
+        float size = oak ? rng.range(0.6f, 1.0f) : rng.range(0.7f, 1.3f);
+        // Crown width as if the tree were crowded (it will be, this close to a house).
+        float crownR = oak ? p[kParamOakHeight] * size * 0.35f : p[kParamTreeHeight] * size * p[kParamTreeCanopy];
         SurfaceHit w;
         float d = bvh.closestPoint(s.point + kUp * 0.5f, 15.0f, w, kMaskSolid | kMaskNoGrow) ? w.distance : 15.0f;
         if (d < std::max(2.0f, crownR * 0.75f) || d > crownR * 0.75f + 5.0f) continue;
-        if (!spaced(s.point, 4.0f)) continue;
+        if (!spaced(s.point, 4.0f) || isEnclosed(bvh, s.point)) continue;
+        float crowding = estimateCrowding(bvh, s.point, trunks);
         Rng treeRng = rng.fork(uint32_t(8000 + placedGround));
-        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, size, out);
+        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, size, oak ? kTreeOak : kTreeRound, crowding, out);
         trunks.push_back(s.point);
         ++placedGround;
     }

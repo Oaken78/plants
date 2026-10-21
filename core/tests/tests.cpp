@@ -102,12 +102,12 @@ static void testGrowth() {
         CHECK(finite);
         CHECK(inRange);
         const float* b = plants_mesh_bounds(ctx, lod);
-        CHECK(b[4] < 16.0f);  // the tallest things are trees on the 3 m box (tree.height 7 x size <= 1.3, +15%)
+        CHECK(b[4] < 30.0f);  // the tallest things are yard oaks (oak.height 15 x size <= 1, crowded +30%, +15%)
     }
 
-    // Everything stays around the 16 x 16 m ground patch (tree crowns may overhang its edge).
+    // Everything stays around the 16 x 16 m ground patch (tree crowns, oaks especially, may overhang its edge).
     const float* b = plants_mesh_bounds(ctx, 0);
-    CHECK(b[0] > -13 && b[2] > -13 && b[3] < 13 && b[5] < 13);
+    CHECK(b[0] > -22 && b[2] > -22 && b[3] < 22 && b[5] < 22);
 
     uint64_t first = hashMesh(ctx, 0);
     plants_grow_on_host(ctx, 42);
@@ -164,7 +164,7 @@ static void testTrees() {
     PlantsContext* ctx = plants_create();
     float prevHeight = 0;
     for (float size : {0.45f, 1.0f, 1.8f}) {
-        int leaves = plants_make_tree(ctx, 11, size);
+        int leaves = plants_make_tree(ctx, 11, size, 0, 0.5f);
         const float* b = plants_mesh_bounds(ctx, 0);
         std::printf("tree size %.2f: %d leaves, %.1f m tall, lod tris %d/%d/%d/%d\n", size, leaves, b[4],
                     plants_mesh_index_count(ctx, 0) / 3, plants_mesh_index_count(ctx, 1) / 3,
@@ -179,6 +179,22 @@ static void testTrees() {
         for (int i = 0; i < plants_mesh_vertex_count(ctx, 3); ++i) trunk = trunk || aux[i * 4 + 3] == kMatBark;
         CHECK(trunk);
     }
+
+    // Oaks: bigger than round trees; alone they spread wider than they are tall, crowded they grow taller and narrower.
+    struct Extent { float width, height; int leaves; };
+    auto treeExtent = [&](int species, float crowding) {
+        int leaves = plants_make_tree(ctx, 21, 1.0f, species, crowding);
+        const float* b = plants_mesh_bounds(ctx, 0);
+        return Extent{std::max(b[3] - b[0], b[5] - b[2]), b[4], leaves};
+    };
+    Extent round = treeExtent(0, 0.5f), broad = treeExtent(1, 0.0f), tall = treeExtent(1, 1.0f);
+    std::printf("round tree %.1f x %.1f m; lone oak %.1f wide x %.1f m tall (%d leaves); crowded oak %.1f x %.1f m (%d leaves)\n",
+                round.width, round.height, broad.width, broad.height, broad.leaves, tall.width, tall.height, tall.leaves);
+    CHECK(broad.height > round.height * 1.4f);
+    CHECK(broad.width > broad.height);
+    CHECK(tall.height > broad.height * 1.2f);
+    CHECK(tall.width < broad.width * 0.7f);
+    CHECK(broad.leaves < 22000 * 1.4f);  // tree.maxLeaves keeps giant crowns affordable
 
     // Only trees, on the roof: low roofs send roots down the walls, high roofs keep them up.
     for (const char* name : {"climber.seeds", "climber.roofSeeds", "bush.count", "tree.groundCount"})
@@ -220,11 +236,42 @@ static void testTrees() {
     plants_destroy(ctx);
 }
 
+// Plants never start inside a building, even though the ground patch runs under it.
+static void testNothingInside() {
+    PlantsContext* ctx = plants_create();
+    TestHost host(3.0f);
+    plants_set_host(ctx, host.pos.data(), int(host.pos.size() / 3), host.idx.data(), int(host.idx.size()), host.tags.data());
+    plants_set_param(ctx, paramId("tree.groundCount"), 6);
+    plants_set_param(ctx, paramId("bush.count"), 40);
+    int inside = 0, byMat[16] = {};
+    for (uint32_t seed = 1; seed <= 6; ++seed) {
+        plants_grow_on_host(ctx, seed);
+        const float* p = plants_mesh_positions(ctx, 0);
+        const uint8_t* aux = plants_mesh_aux(ctx, 0);
+        for (int i = 0; i < plants_mesh_vertex_count(ctx, 0); ++i) {
+            if (aux[i * 4 + 3] == kMatBark) continue;  // roots may slip in
+            float x = std::fabs(p[i * 3]), y = p[i * 3 + 1], z = std::fabs(p[i * 3 + 2]);
+            if (x < 1.9f && z < 1.9f && y > 0.05f && y < 2.9f) {
+                if (inside < 3) std::printf("  inside: seed %u mat %d at (%.2f, %.2f, %.2f)\n", seed, aux[i * 4 + 3], p[i * 3], y, p[i * 3 + 2]);
+                ++inside;
+                ++byMat[aux[i * 4 + 3] & 15];
+            }
+        }
+    }
+    std::printf("plant vertices inside the closed box over 6 seeds: %d (by material:", inside);
+    for (int m = 0; m < 16; ++m)
+        if (byMat[m]) std::printf(" %d=%d", m, byMat[m]);
+    std::printf(")\n");
+    CHECK(inside == 0);
+    plants_destroy(ctx);
+}
+
 int main() {
     testBvh();
     testGrowth();
     testStandalone();
     testTrees();
+    testNothingInside();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

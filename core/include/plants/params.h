@@ -44,6 +44,12 @@ namespace plants {
     X(TreeRoots, "tree.roots", 6, 0, 16)                          \
     X(TreeRootReach, "tree.rootReach", 8.0f, 0, 30)               \
     X(TreeRootBranching, "tree.rootBranching", 0.7f, 0, 2)        \
+    X(TreeMaxLeaves, "tree.maxLeaves", 22000, 2000, 80000)        \
+    X(TreeOakShare, "tree.oakShare", 0.35f, 0, 1)                 \
+    X(OakHeight, "oak.height", 15.0f, 4, 30)                      \
+    X(OakTrunk, "oak.trunk", 0.05f, 0.02f, 0.1f)                  \
+    X(OakLeafSize, "oak.leafSize", 0.2f, 0.06f, 0.6f)             \
+    X(OakLeafDensity, "oak.leafDensity", 45, 10, 300)             \
     X(GrassBlades, "grass.blades", 18, 3, 40)                     \
     X(GrassHeight, "grass.height", 0.26f, 0.05f, 1.2f)            \
     X(GrassFlowerChance, "grass.flowerChance", 0.3f, 0, 1)        \

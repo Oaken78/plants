@@ -59,8 +59,9 @@ PLANTS_API void plants_set_host(PlantsContext* ctx, const float* positions, int 
 PLANTS_API int plants_grow_on_host(PlantsContext* ctx, uint32_t seed);
 /* A standalone bush at the origin (style: 0 round, 1 tall, 2 spreading, 3 flowering). */
 PLANTS_API int plants_make_bush(PlantsContext* ctx, uint32_t seed, int style, float scale);
-/* A standalone tree at the origin; size scales tree.height (about 0.4 small, 1 medium, 1.8 large). */
-PLANTS_API int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size);
+/* A standalone tree at the origin. species: 0 round, 1 oak. size scales tree.height or oak.height (about 0.4 small,
+ * 1 medium, 1.8 large). crowding: 0 = standing alone (broad), 1 = among trees or houses (tall and narrow). */
+PLANTS_API int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size, int species, float crowding);
 /* A standalone grass tuft at the origin. */
 PLANTS_API int plants_make_grass(PlantsContext* ctx, uint32_t seed);
 

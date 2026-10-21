@@ -13,11 +13,18 @@ import { WORLD, terrainHeight, houseCell, makeBushCell, makeGrassCell, makeTreeC
 const RANGES = {
   house: [90, 2900],
   housePlants: [24, 65, 190, 2900],
+  tower: [130, 3200],
+  towerPlants: [30, 85, 260, 3200],
   bush: [26, 70, 200, 1100],
   tree: [34, 100, 340, 2600],
   grass: [26, 52],
 };
-const HERO_PARAMS = { 'climber.seeds': 34, 'climber.roofSeeds': 10, 'climber.budget': 20000, 'bush.count': 22, 'tree.count': 3, 'tree.groundCount': 2 };
+const HERO_PARAMS = { 'climber.seeds': 34, 'climber.roofSeeds': 10, 'climber.budget': 20000, 'bush.count': 22, 'tree.count': 3,
+  'tree.groundCount': 2, 'tree.oakShare': 0.5 };
+// Towers are tall: ivy needs more steps to climb them, and curtains hang longer from their roofs.
+const TOWER_PARAMS = { 'climber.seeds': 44, 'climber.roofSeeds': 14, 'climber.budget': 32000, 'climber.maxSteps': 420,
+  'climber.hangLength': 5, 'bush.count': 18, 'bush.roofShare': 0.5, 'tree.count': 2, 'tree.groundCount': 2 };
+const TOWER_NAMES = ['TowerA', 'TowerB', 'TowerC'];
 const SHADOW_SIZE = 4096;
 const SHADOW_HALF = 85;
 
@@ -139,9 +146,14 @@ function houseGeometry(root) {
   return { geom, host: { pos: new Float32Array(pos), idx: new Uint32Array(idx), tags: new Uint8Array(tags) } };
 }
 
-// Host = house triangles + a ground patch the bushes and climber roots can use.
-function withGroundPatch(host) {
-  const [x0, x1, z0, z1] = [-12, 9.5, -8.5, 9.5];
+// Host = building triangles + a ground patch around them (margin metres wide) for bushes, trees and roots.
+function withGroundPatch(host, margin) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < host.pos.length; i += 3) {
+    x0 = Math.min(x0, host.pos[i]); x1 = Math.max(x1, host.pos[i]);
+    z0 = Math.min(z0, host.pos[i + 2]); z1 = Math.max(z1, host.pos[i + 2]);
+  }
+  [x0, x1, z0, z1] = [x0 - margin, x1 + margin, z0 - margin, z1 + margin];
   const n = host.pos.length / 3;
   const pos = new Float32Array(host.pos.length + 12);
   pos.set(host.pos);
@@ -158,7 +170,7 @@ function withGroundPatch(host) {
 // ---------------------------------------------------------------- build
 
 const skyColor = new THREE.Vector3(...hexToLinear(PALETTE.skyHorizon));
-let generator, houseLayer, bushLayer, treeLayer, grassLayer, houseGeoms, heroSeed = 1;
+let generator, houseLayer, bushLayer, treeLayer, grassLayer, houseGeoms, houseHost, heroSeed = 1;
 const layers = [];
 const genStats = {};
 
@@ -170,16 +182,25 @@ function plantPart(lods, ranges, shrink) {
   };
 }
 
-function houseVariant(plantLods) {
+function buildingVariant(geoms, plantLods, buildingRanges, plantRanges) {
   return {
     parts: [
-      { lods: houseGeoms, ranges: RANGES.house, material: () => M.buildingMaterial(skyColor), shadowMaterial: () => M.buildingShadowMaterial() },
-      plantPart(plantLods, RANGES.housePlants),
+      { lods: geoms, ranges: buildingRanges, material: () => M.buildingMaterial(skyColor), shadowMaterial: () => M.buildingShadowMaterial() },
+      plantPart(plantLods, plantRanges),
     ],
   };
 }
+const houseVariant = (plantLods) => buildingVariant(houseGeoms, plantLods, RANGES.house, RANGES.housePlants);
+
+// glTF models are embedded as base64 modules (see tools/make-house.mjs) so hosts that refuse .glb files still work.
+async function loadModel(module) {
+  const { GLB_BASE64 } = await import(module);
+  const glb = Uint8Array.from(atob(GLB_BASE64), (c) => c.charCodeAt(0)).buffer;
+  return new GLTFLoader().parseAsync(glb, '');
+}
 
 function growHero(seed) {
+  generator.setHost(houseHost.pos, houseHost.idx, houseHost.tags);
   generator.withParams({ ...HERO_PARAMS, ...heroOverrides });
   const t0 = performance.now();
   const lods = generator.growOnHost(seed);
@@ -191,16 +212,14 @@ async function build() {
   status('Loading WebAssembly plant core...');
   generator = await PlantGenerator.create();
 
-  status('Loading house model...');
-  // Embedded as a module (see tools/make-house.mjs) so hosts that refuse .glb files still work.
-  const { HOUSE_GLB_BASE64 } = await import('../assets/house-glb.js');
-  const glb = Uint8Array.from(atob(HOUSE_GLB_BASE64), (c) => c.charCodeAt(0)).buffer;
-  const gltf = await new GLTFLoader().parseAsync(glb, '');
-  const lod0 = houseGeometry(gltf.scene.getObjectByName('House_LOD0'));
-  const lod1 = houseGeometry(gltf.scene.getObjectByName('House_LOD1'));
+  status('Loading models...');
+  const houseModel = await loadModel('../assets/house-glb.js');
+  const towerModel = await loadModel('../assets/towers-glb.js');
+  const lod0 = houseGeometry(houseModel.scene.getObjectByName('House_LOD0'));
+  const lod1 = houseGeometry(houseModel.scene.getObjectByName('House_LOD1'));
   houseGeoms = [lod0.geom, lod1.geom];
-  const host = withGroundPatch(lod0.host);
-  generator.setHost(host.pos, host.idx, host.tags);
+  houseHost = withGroundPatch(lod0.host, 4.5);
+  generator.setHost(houseHost.pos, houseHost.idx, houseHost.tags);
 
   status('Growing the hero house...');
   await nextFrame();
@@ -211,8 +230,18 @@ async function build() {
     generator.withParams({});
     variants.push(houseVariant(generator.growOnHost(100 + v * 17)));
   }
-  houseLayer = new LodLayer({ name: 'houses', cellSize: WORLD.siteSpacing, maxDistance: 2900, variants,
-    generateCell: houseCell, yRange: [-2, 14] });
+  for (const [i, name] of TOWER_NAMES.entries()) {
+    status(`Growing tower ${i + 1}/${TOWER_NAMES.length}...`);
+    await nextFrame();
+    const t0 = houseGeometry(towerModel.scene.getObjectByName(`${name}_LOD0`));
+    const t1 = houseGeometry(towerModel.scene.getObjectByName(`${name}_LOD1`));
+    const host = withGroundPatch(t0.host, 6);
+    generator.setHost(host.pos, host.idx, host.tags);
+    generator.withParams(TOWER_PARAMS);
+    variants.push(buildingVariant([t0.geom, t1.geom], generator.growOnHost(400 + i * 41), RANGES.tower, RANGES.towerPlants));
+  }
+  houseLayer = new LodLayer({ name: 'houses', cellSize: WORLD.siteSpacing, maxDistance: 3200, variants,
+    generateCell: houseCell, yRange: [-2, 52] });
 
   status('Growing bushes and grass...');
   await nextFrame();
@@ -224,11 +253,20 @@ async function build() {
     generateCell: makeBushCell(bushVariants.length, 32), yRange: [-1, 4] });
   status('Growing trees...');
   await nextFrame();
-  // Small, medium and large trees, a few seeds each.
+  // Round trees in nine sizes, then oaks: three sizes, each grown broad (alone), medium and tall (crowded).
   const treeSizes = [0.4, 0.5, 0.75, 0.9, 1.0, 1.15, 1.35, 1.6, 1.85];
-  const treeVariants = treeSizes.map((size, i) => ({ parts: [plantPart(generator.makeTree(300 + i * 23, size), RANGES.tree)] }));
+  const treeVariants = treeSizes.map((size, i) => ({ parts: [plantPart(generator.makeTree(300 + i * 23, size, 0, 0.5), RANGES.tree)] }));
+  const oakSizes = [0.8, 1.05, 1.3], oakForms = [0, 0.5, 1];
+  const kinds = { round: treeVariants.length, oakBase: treeVariants.length, oakSizes: oakSizes.length, oakForms: oakForms.length };
+  for (const [si, size] of oakSizes.entries()) {
+    status(`Growing oaks ${si + 1}/${oakSizes.length}...`);
+    await nextFrame();
+    for (const [fi, crowding] of oakForms.entries()) {
+      treeVariants.push({ parts: [plantPart(generator.makeTree(700 + si * 31 + fi * 7, size, 1, crowding), RANGES.tree)] });
+    }
+  }
   treeLayer = new LodLayer({ name: 'trees', cellSize: 48, maxDistance: 2600, variants: treeVariants,
-    generateCell: makeTreeCell(treeVariants.length, 48), yRange: [-1, 26] });
+    generateCell: makeTreeCell(kinds, 48), yRange: [-1, 32] });
   const grassVariants = [];
   for (let i = 0; i < 8; i++) grassVariants.push({ parts: [plantPart(generator.makeGrass(900 + i * 13), RANGES.grass, [30, 50])] });
   grassLayer = new LodLayer({ name: 'grass', cellSize: 6, maxDistance: 52, variants: grassVariants,
@@ -260,6 +298,8 @@ const views = {
   Digit4: { pos: [180, 95, 260], target: [0, 0, 0] },
   Digit5: { pos: [445, 2.2, -95], target: [551, 4, -174] },
   Digit6: { pos: [650, 45, -70], target: [551, 0, -174] },
+  Digit7: { pos: [18, 7, 2], target: [-2, 9, -52] },
+  Digit8: { pos: [-50, 2, -22], target: [-27, 5, -3] },
 };
 
 function goTo(flycam, view) {

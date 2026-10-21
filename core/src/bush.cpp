@@ -67,7 +67,27 @@ void coverClumpsWithLeaves(Rng& rng, PlantSet& out, size_t firstClump, const Vec
     }
 }
 
-int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, float scale, int style, PlantSet& out) {
+void dropFoliageBehindWalls(const TriangleBvh& host, const Vec3& base, const Vec3& up, size_t firstLeaf,
+                            size_t firstFlower, PlantSet& out) {
+    auto hidden = [&](const Vec3& pos) {
+        Vec3 from = base + up * std::max(0.1f, dot(pos - base, up));
+        Vec3 d = pos - from;
+        float len = length(d);
+        SurfaceHit h;
+        return len > 1e-3f && host.raycast(from, d / len, len, h, kMaskSolid | kMaskNoGrow);
+    };
+    size_t kept = firstLeaf;
+    for (size_t i = firstLeaf; i < out.leaves.size(); ++i)
+        if (!hidden(out.leaves[i].pos)) out.leaves[kept++] = out.leaves[i];
+    out.leaves.resize(kept);
+    kept = firstFlower;
+    for (size_t i = firstFlower; i < out.flowers.size(); ++i)
+        if (!hidden(out.flowers[i].pos)) out.flowers[kept++] = out.flowers[i];
+    out.flowers.resize(kept);
+}
+
+int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, float scale, int style, PlantSet& out,
+             const TriangleBvh* host) {
     const int group = out.nextGroup++;
     ++out.bushCount;
     const Vec3 up = normalize(upIn);
@@ -89,6 +109,12 @@ int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, floa
     auto addClump = [&](const Vec3& local, float r) {
         Clump c;
         c.center = toWorld(local);
+        if (host) {
+            // A bush leaning on a wall gets squashed against it instead of growing through it.
+            SurfaceHit h;
+            if (host->closestPoint(c.center, r * 0.9f, h, kMaskSolid | kMaskNoGrow))
+                c.center += normalize(c.center - h.point, h.normal) * (r * 0.9f - h.distance);
+        }
         c.radii = {r, r * 0.92f, r};
         c.axis = up;
         c.group = group;
@@ -109,6 +135,20 @@ int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, floa
                    std::sin(angle) * std::cos(elev) * R * 0.62f};
         local.y = std::max(local.y, r * 0.62f);
         addClump(local, r);
+    }
+
+    if (host) {
+        // Drop clumps the bush could only reach through a wall, around a corner. The crown clump stays.
+        size_t kept = firstClump + 1;
+        const Vec3 from = base + up * 0.1f;
+        for (size_t ci = firstClump + 1; ci < out.clumps.size(); ++ci) {
+            Vec3 d = out.clumps[ci].center - from;
+            float len = length(d);
+            SurfaceHit h;
+            if (len > 1e-3f && host->raycast(from, d / len, len, h, kMaskSolid | kMaskNoGrow)) continue;
+            out.clumps[kept++] = out.clumps[ci];
+        }
+        out.clumps.resize(kept);
     }
 
     // Branches from the root to every clump, plus a few twigs inside each clump.
@@ -141,6 +181,7 @@ int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, floa
         }
     }
 
+    const size_t firstLeaf = out.leaves.size(), firstFlower = out.flowers.size();
     coverClumpsWithLeaves(rng, out, firstClump, base, up, 0.0f, H, p[kParamBushLeafSize], p[kParamBushLeafDensity],
                           kMatBushLeaf, kShapeBush, group, 0.35f);
 
@@ -163,6 +204,7 @@ int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, floa
             out.flowers.push_back(f);
         }
     }
+    if (host) dropFoliageBehindWalls(*host, base, up, firstLeaf, firstFlower, out);
     return group;
 }
 
