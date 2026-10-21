@@ -210,8 +210,24 @@ wild flowers on stalks.
 from its plant's clumps, so a bush shades like a few soft lumps and ivy like a padded blanket. The field also gives
 ambient occlusion, which darkens clump interiors. The distant puff LODs sample the same field, so lighting matches
 across LOD transitions. The shaders use two flat tones with a crisp terminator and a warm highlight band; shadows
-fall to blue-tinted palette tones, never grey. Leaves have inked outlines and a lighter midrib up close. A post pass
-adds depth-based ink lines (silhouettes and convex creases), the sky and clouds, and aerial perspective.
+fall to blue-tinted palette tones, never grey. A post pass adds depth-based ink lines (silhouettes and convex
+creases), the sky and clouds, and aerial perspective.
+
+**Leaf shapes and close-up detail.** A leaf is drawn on a coarse ribbon mesh that carries leaf-space coordinates.
+The fragment shader cuts the true outline from a smooth shape function:
+- heart-shaped, three-lobed ivy;
+- pointed-oval bush and round-tree leaves;
+- oak leaves, rounded at both ends with four broad lobes a side and deep, narrow sinuses;
+- rounded petals.
+
+The edge is anti-aliased with alpha-to-coverage, so outlines stay smooth however close the camera gets, with no
+extra triangles. The same shape cuts the shadow map. Detail is added by distance:
+- **Big enough on screen:** a pixel-wide ink outline.
+- **Bigger still:** a lighter midrib.
+- **Within about 5 m:** a close-up level adds fine veins, palmate on ivy and pinnate on the other leaves.
+
+The shape functions live in `leafHalfWidth()` in both `core/src/mesher.cpp` (which sizes the hulls) and
+`web/js/materials.js` (which cuts the outline); keep them identical.
 
 ## LOD strategy
 
@@ -219,8 +235,8 @@ Each generated plant set is meshed four times from the same data:
 
 | LOD | Content | Used (house plants) | Hero house | Bush |
 | --- | --- | --- | --- | --- |
-| 0 | Every leaf (15-vertex lobed ivy, 11-vertex bush leaf), 6-sided stems, full flowers | < 24 m | ~1.0 M tris | ~12 k |
-| 1 | 30% of leaves (a deterministic subset), enlarged to keep coverage, simpler outlines, 4-sided thick stems | < 65 m | ~145 k | ~1.5 k |
+| 0 | Every leaf (a 12-vertex ribbon that bends it; the outline comes from the shader), 6-sided stems, full flowers | < 24 m | ~1.0 M tris | ~14 k |
+| 1 | 30% of leaves (a deterministic subset), enlarged to keep coverage, 6-vertex ribbons, 4-sided thick stems | < 65 m | ~145 k | ~1.5 k |
 | 2 | Lumpy puffs from the clump field (ivy clumps merged), 6% big silhouette leaves, flower dots, trunks | < 190 m | ~63 k | ~1 k |
 | 3 | Merged low-poly puffs only (plus tree trunks) | < 2.9 km | ~1.8 k | 80 |
 

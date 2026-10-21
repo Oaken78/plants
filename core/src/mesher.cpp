@@ -6,10 +6,11 @@
 
 namespace plants {
 
-uint32_t MeshBuffers::addVertex(const Vec3& p, const Vec3& n, float hue, float value, float ao, float edge, float flex,
-                                float phase, float birth, uint8_t mat) {
+uint32_t MeshBuffers::addVertex(const Vec3& p, const Vec3& n, float hue, float value, float ao, float leafU, float leafV,
+                                float flex, float phase, float birth, uint8_t mat) {
     auto u8 = [](float v) { return uint8_t(saturate(v) * 255.0f + 0.5f); };
     auto s8 = [](float v) { return int8_t(std::lround(clampf(v, -1.0f, 1.0f) * 127.0f)); };
+    const bool leaf = leafV > kNotLeaf * 0.5f;
     uint32_t index = uint32_t(positions.size() / 3);
     positions.push_back(p.x);
     positions.push_back(p.y);
@@ -19,16 +20,38 @@ uint32_t MeshBuffers::addVertex(const Vec3& p, const Vec3& n, float hue, float v
     normals.push_back(s8(nn.x));
     normals.push_back(s8(nn.y));
     normals.push_back(s8(nn.z));
-    normals.push_back(0);
+    normals.push_back(leaf ? s8(leafU / 0.6f) : 0);
     shade.push_back(u8(hue * 0.5f + 0.5f));
     shade.push_back(u8(value - 0.5f));
     shade.push_back(u8(ao));
-    shade.push_back(u8(edge));
+    shade.push_back(leaf ? uint8_t(saturate((leafV + 0.1f) / 1.2f) * 250.0f + 0.5f) : uint8_t(255));
     aux.push_back(u8(flex / kFlexScale));
     aux.push_back(u8(phase - std::floor(phase)));
     aux.push_back(u8(birth));
     aux.push_back(mat);
     return index;
+}
+
+static float gauss(float y, float m, float s) {
+    float t = (y - m) / s;
+    return std::exp(-t * t);
+}
+
+float leafHalfWidth(int shape, float y) {
+    float yc = clampf(y, 0.0f, 1.0f);
+    switch (shape) {
+        case kShapeIvy:  // basal, side and tip lobes of a hedera leaf
+            return 0.40f * gauss(y, 0.12f, 0.15f) + 0.48f * gauss(y, 0.42f, 0.16f) + 0.22f * gauss(y, 0.72f, 0.16f);
+        case kShapeOak: {
+            // Rounded at base and tip, widest past the middle, four broad lobes a side with deep narrow sinuses.
+            float env = 0.42f * std::sqrt(std::max(std::sin(kPi * std::pow(yc, 1.25f)), 0.0f));
+            float sinus = 0.5f - 0.5f * std::cos(2 * kPi * 4.0f * yc);
+            return env * (1.0f - 0.5f * sinus * sinus * sinus);
+        }
+        case kShapePetal: return 0.30f * std::pow(std::max(std::sin(kPi * yc), 0.0f), 0.55f);
+        default:  // bush and round-tree leaves: a pointed ellipse
+            return 0.30f * std::pow(std::max(std::sin(kPi * yc), 0.0f), 0.75f) * (1.0f - 0.25f * yc);
+    }
 }
 
 namespace {
@@ -37,66 +60,40 @@ const Vec3 kUp{0, 1, 0};
 
 struct LeafTemplate {
     struct Vert {
-        float x, y, e;
+        float x, y;
     };
     std::vector<Vert> verts;
     std::vector<uint32_t> tris;
 };
 
-struct V2 {
-    float x, y;
-};
-
-// Triangulates a y-monotone leaf outline: centre line (midrib) + right edge, mirrored for the left half.
-// Midrib vertices get edge = 0 and outline vertices edge = 1, so the shader can ink both.
-LeafTemplate makeTemplate(const std::vector<V2>& center, const std::vector<V2>& right, V2 tip) {
+// A leaf is a ribbon of rows (left edge, midrib, right edge) wide enough to hold the true shape between every pair
+// of rows; the shader discards what lies outside the shape. Fewer rows only bend the leaf less, the outline stays
+// exactly as smooth.
+LeafTemplate makeHull(int shape, const std::vector<float>& rows) {
     LeafTemplate t;
-    const int nc = int(center.size()), nr = int(right.size());
-    for (auto c : center) t.verts.push_back({c.x, c.y, 0.0f});
-    for (auto r : right) t.verts.push_back({r.x, r.y, 1.0f});
-    for (auto r : right) t.verts.push_back({-r.x, r.y, 1.0f});
-    t.verts.push_back({tip.x, tip.y, 1.0f});
-    const uint32_t tipIndex = uint32_t(nc + 2 * nr);
-    for (int half = 0; half < 2; ++half) {
-        bool mirror = half == 1;
-        uint32_t sideBase = uint32_t(nc + (mirror ? nr : 0));
-        auto emit = [&](uint32_t a, uint32_t b, uint32_t c) {
-            t.tris.push_back(a);
-            t.tris.push_back(mirror ? c : b);
-            t.tris.push_back(mirror ? b : c);
-        };
-        int i = 0, j = 0;
-        while (i < nc - 1 || j < nr - 1) {
-            bool advanceRight = i == nc - 1 ? true : (j == nr - 1 ? false : right[j + 1].y <= center[i + 1].y);
-            if (advanceRight) {
-                emit(uint32_t(i), sideBase + j, sideBase + j + 1);
-                ++j;
-            } else {
-                emit(uint32_t(i), sideBase + j, uint32_t(i + 1));
-                ++i;
-            }
-        }
-        emit(uint32_t(nc - 1), sideBase + nr - 1, tipIndex);
+    for (size_t r = 0; r < rows.size(); ++r) {
+        float y0 = rows[r > 0 ? r - 1 : r], y1 = rows[r + 1 < rows.size() ? r + 1 : r];
+        float w = 0;
+        for (int k = 0; k <= 32; ++k) w = std::max(w, leafHalfWidth(shape, lerpf(y0, y1, k / 32.0f)));
+        w += 0.03f;
+        t.verts.push_back({-w, rows[r]});
+        t.verts.push_back({0.0f, rows[r]});
+        t.verts.push_back({w, rows[r]});
+    }
+    for (uint32_t r = 0; r + 1 < rows.size(); ++r) {
+        uint32_t l0 = r * 3, c0 = l0 + 1, r0 = l0 + 2, l1 = l0 + 3, c1 = l0 + 4, r1 = l0 + 5;
+        uint32_t tris[12] = {c0, r0, r1, c0, r1, c1, c0, c1, l1, c0, l1, l0};
+        t.tris.insert(t.tris.end(), tris, tris + 12);
     }
     return t;
 }
 
 const LeafTemplate& leafTemplate(int shape, bool simple) {
-    static const LeafTemplate ivy = makeTemplate(
-        {{0, 0}, {0, 0.5f}}, {{0.12f, -0.04f}, {0.42f, 0.12f}, {0.36f, 0.27f}, {0.5f, 0.43f}, {0.28f, 0.62f}, {0.12f, 0.85f}},
-        {0, 1});
-    static const LeafTemplate ivySimple = makeTemplate({{0, 0}}, {{0.4f, 0.1f}, {0.48f, 0.42f}, {0.2f, 0.75f}}, {0, 1});
-    static const LeafTemplate bush =
-        makeTemplate({{0, 0}, {0, 0.55f}}, {{0.2f, 0.12f}, {0.3f, 0.38f}, {0.25f, 0.68f}, {0.11f, 0.9f}}, {0, 1});
-    static const LeafTemplate bushSimple = makeTemplate({{0, 0}}, {{0.28f, 0.3f}, {0.2f, 0.72f}}, {0, 1});
-    static const LeafTemplate petal = makeTemplate({{0, 0}}, {{0.28f, 0.35f}, {0.22f, 0.78f}}, {0, 1});
-    // Oak: obovate with four rounded lobes a side, widest toward the tip.
-    static const LeafTemplate oak = makeTemplate(
-        {{0, 0}, {0, 0.35f}, {0, 0.7f}},
-        {{0.1f, 0.06f}, {0.22f, 0.14f}, {0.14f, 0.24f}, {0.28f, 0.36f}, {0.18f, 0.46f}, {0.32f, 0.58f}, {0.2f, 0.68f},
-         {0.3f, 0.8f}, {0.14f, 0.92f}},
-        {0, 1});
-    static const LeafTemplate oakSimple = makeTemplate({{0, 0}}, {{0.2f, 0.2f}, {0.3f, 0.5f}, {0.28f, 0.78f}}, {0, 1});
+    static const std::vector<float> full{-0.08f, 0.3f, 0.65f, 1.02f}, coarse{-0.08f, 1.02f};
+    static const LeafTemplate ivy = makeHull(kShapeIvy, full), ivySimple = makeHull(kShapeIvy, coarse);
+    static const LeafTemplate bush = makeHull(kShapeBush, full), bushSimple = makeHull(kShapeBush, coarse);
+    static const LeafTemplate oak = makeHull(kShapeOak, full), oakSimple = makeHull(kShapeOak, coarse);
+    static const LeafTemplate petal = makeHull(kShapePetal, {-0.02f, 1.02f});
     switch (shape) {
         case kShapeIvy: return simple ? ivySimple : ivy;
         case kShapeBush: return simple ? bushSimple : bush;
@@ -184,7 +181,7 @@ void emitLeaf(const Leaf& l, const LeafTemplate& t, float scale, MeshBuffers& m)
         // Tilt each half's normal a little so leaves near the terminator split into a lit and a shaded half.
         float halfSign = v.x > 0 ? 1.0f : (v.x < 0 ? -1.0f : 0.0f);
         Vec3 n = normalize(l.shadeNormal + f.side * (halfSign * 0.18f), l.shadeNormal);
-        m.addVertex(pos, n, l.hue, l.value, l.ao, v.e, l.flex * (0.6f + 0.4f * v.y), l.phase, l.birth, l.mat);
+        m.addVertex(pos, n, l.hue, l.value, l.ao, v.x, v.y, l.flex * (0.6f + 0.4f * v.y), l.phase, l.birth, l.mat);
     }
     for (uint32_t idx : t.tris) m.indices.push_back(first + idx);
 }
@@ -221,7 +218,7 @@ void emitTube(const PlantSet& s, const std::vector<uint8_t>& hasChild, const Ste
         for (int k = 0; k < sides; ++k) {
             float ang = 2 * kPi * k / sides;
             Vec3 dir = u * std::cos(ang) + v * std::sin(ang);
-            m.addVertex(node.pos + dir * r, dir, 0.0f, value, 0.85f, 0.5f, node.flex, phase, node.birth, stem.mat);
+            m.addVertex(node.pos + dir * r, dir, 0.0f, value, 0.85f, 0.0f, kNotLeaf, node.flex, phase, node.birth, stem.mat);
         }
         if (i > 0) {
             for (int k = 0; k < sides; ++k) {
@@ -246,10 +243,10 @@ void emitBlade(const Blade& b, float widthScale, MeshBuffers& m) {
         float w = b.width * widthScale * (1.0f - t * 0.8f) * 0.5f;
         for (int side = -1; side <= 1; side += 2)
             m.addVertex(c + b.side * (w * side), n, b.hue + t * 0.25f, b.value * (0.92f + 0.16f * t), lerpf(0.35f, 1.0f, t),
-                        0.5f, flexScale * t * t, b.phase, 0.0f, kMatGrass);
+                        0.0f, kNotLeaf, flexScale * t * t, b.phase, 0.0f, kMatGrass);
     }
     Vec3 tip = b.base + b.dir * b.height + bendDir * (b.bend * b.height);
-    m.addVertex(tip, n, b.hue + 0.25f, b.value * 1.08f, 1.0f, 0.5f, flexScale, b.phase, 0.0f, kMatGrass);
+    m.addVertex(tip, n, b.hue + 0.25f, b.value * 1.08f, 1.0f, 0.0f, kNotLeaf, flexScale, b.phase, 0.0f, kMatGrass);
     for (uint32_t s = 0; s < 2; ++s) {
         uint32_t l0 = first + s * 2, r0 = l0 + 1, l1 = l0 + 2, r1 = l0 + 3;
         m.addTriangle(l0, r0, r1);
@@ -265,10 +262,10 @@ void emitFlower(const Flower& f, float scale, bool simple, MeshBuffers& m) {
     float rot = f.phase * 2 * kPi;
     uint32_t first = uint32_t(m.vertexCount());
     if (simple) {
-        m.addVertex(f.pos + n * (size * 0.05f), f.shadeNormal, 0, 1, 1, 0.5f, f.flex, f.phase, f.birth, f.mat);
+        m.addVertex(f.pos + n * (size * 0.05f), f.shadeNormal, 0, 1, 1, 0.0f, kNotLeaf, f.flex, f.phase, f.birth, f.mat);
         for (int k = 0; k < 5; ++k) {
             Vec3 d = rotateAxis(side0, n, rot + k * 2 * kPi / 5);
-            m.addVertex(f.pos + d * (size * 0.5f), f.shadeNormal, 0, 1, 1, 0.5f, f.flex, f.phase, f.birth, f.mat);
+            m.addVertex(f.pos + d * (size * 0.5f), f.shadeNormal, 0, 1, 1, 0.0f, kNotLeaf, f.flex, f.phase, f.birth, f.mat);
         }
         for (uint32_t k = 0; k < 5; ++k) m.addTriangle(first, first + 1 + k, first + 1 + (k + 1) % 5);
         return;
@@ -281,16 +278,16 @@ void emitFlower(const Flower& f, float scale, bool simple, MeshBuffers& m) {
         for (const auto& v : petal.verts) {
             Vec3 pos = f.pos + fwd * (size * (0.08f + v.y * 0.55f)) + side * (v.x * size * 0.55f) +
                        n * (v.y * v.y * size * 0.18f);
-            m.addVertex(pos, f.shadeNormal, 0, 1, 1, v.e, f.flex, f.phase, f.birth, f.mat);
+            m.addVertex(pos, f.shadeNormal, 0, 1, 1, v.x, v.y, f.flex, f.phase, f.birth, f.mat);
         }
         for (uint32_t idx : petal.tris) m.indices.push_back(base + idx);
     }
     uint32_t center = uint32_t(m.vertexCount());
     Vec3 c = f.pos + n * (size * 0.05f);
-    m.addVertex(c, f.shadeNormal, 0, 1, 1, 0.5f, f.flex, f.phase, f.birth, kMatFlowerCenter);
+    m.addVertex(c, f.shadeNormal, 0, 1, 1, 0.0f, kNotLeaf, f.flex, f.phase, f.birth, kMatFlowerCenter);
     for (int k = 0; k < 6; ++k) {
         Vec3 d = rotateAxis(side0, n, rot + k * 2 * kPi / 6);
-        m.addVertex(c + d * (size * 0.16f), f.shadeNormal, 0, 1, 1, 0.5f, f.flex, f.phase, f.birth, kMatFlowerCenter);
+        m.addVertex(c + d * (size * 0.16f), f.shadeNormal, 0, 1, 1, 0.0f, kNotLeaf, f.flex, f.phase, f.birth, kMatFlowerCenter);
     }
     for (uint32_t k = 0; k < 6; ++k) m.addTriangle(center, center + 1 + k, center + 1 + (k + 1) % 6);
 }
@@ -309,7 +306,7 @@ void emitPuff(const Clump& c, const ClumpField& field, int level, float shrink, 
         FieldSample fs = field.sample(pos, c.group, radial);
         Vec3 n = normalize(lerp(radial, fs.normal, 0.7f), radial);
         float ao = fs.ao * lerpf(0.62f, 1.0f, d.y * 0.5f + 0.5f);
-        m.addVertex(pos, n, c.hue, c.value, ao, 0.5f, c.flex, c.phase, 0.0f, c.mat);
+        m.addVertex(pos, n, c.hue, c.value, ao, 0.0f, kNotLeaf, c.flex, c.phase, 0.0f, c.mat);
     }
     for (uint32_t idx : sphere.tris) m.indices.push_back(first + idx);
 }

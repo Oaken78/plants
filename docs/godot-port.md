@@ -29,7 +29,9 @@ browser-specific part (three.js rendering) maps one-to-one onto built-in Godot f
 3. Build each LOD's `ArrayMesh` from the core buffers:
    - `ARRAY_VERTEX` from the positions.
    - `ARRAY_NORMAL` from the snorm normals.
-   - `ARRAY_CUSTOM0` from `shade`, as RGBA8 unorm: hue, value, ao, edge.
+   - `ARRAY_CUSTOM0` from `shade`, as RGBA8 unorm: hue, value, ao, leaf v (255 = not a leaf).
+   - The normal's fourth byte holds leaf u. Godot's `ARRAY_NORMAL` has no fourth component, so move it into a spare
+     channel, for example `ARRAY_CUSTOM2` as R8 or packed into CUSTOM1.
    - `ARRAY_CUSTOM1` from `aux`, as RGBA8 unorm: flex, phase, birth, material id. Material ids are listed in
      `core/include/plants/plant_set.h`: 0 stem, 1 ivy leaf, 2 bush leaf, 3 grass, 4 to 6 flower parts, 7 tree
      leaf, 8 bark, 9 oak leaf.
@@ -61,7 +63,10 @@ keep their names.
   - The palette colours become uniforms or a small lookup texture indexed by material id (`CUSTOM1.w * 255`).
 - **Foliage normals:** `NORMAL` is already the generator's cloud normal. Keep `cull_disabled` and do not flip it
   for back faces.
-- **Leaf ink and midrib:** use `CUSTOM0.w` with `fwidth()` as in the web shader.
+- **Leaf shapes:** port `leafHalfWidth()` and `leafInside()` from `materials.js`. In `fragment()`, set `ALPHA` from
+  the anti-aliased inside test and use `render_mode depth_draw_opaque` with `ALPHA_SCISSOR_THRESHOLD`, or
+  `ALPHA_ANTIALIASING_EDGE` for alpha-to-coverage. The ink outline, midrib and close-up veins follow the web shader.
+  The shadow pass needs the same discard.
 - **LOD dither:** drop it. Godot's visibility-range fade produces the same screen-door cross-fade.
 
 ## 3. LOD and streaming

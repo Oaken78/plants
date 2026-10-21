@@ -102,6 +102,33 @@ void lodDither(float code) {
 }
 `;
 
+// Leaf shapes, cut per pixel from leaf coordinates (x across, y base to tip). Must match leafHalfWidth() in
+// core/src/mesher.cpp, which sizes the hull each leaf is drawn on. Shapes follow the material: 1 ivy, 2 and 7 bush and
+// round-tree leaves, 9 oak, 4 and 5 petals.
+const LEAF_SHAPES = /* glsl */ `
+float leafGauss(float y, float m, float s) { float t = (y - m) / s; return exp(-t * t); }
+float leafHalfWidth(int mat, float y) {
+  float yc = clamp(y, 0.0, 1.0);
+  if (mat == 1) return 0.40 * leafGauss(y, 0.12, 0.15) + 0.48 * leafGauss(y, 0.42, 0.16) + 0.22 * leafGauss(y, 0.72, 0.16);
+  if (mat == 9) {
+    // Oak: rounded at base and tip, widest past the middle, four broad lobes a side with deep narrow sinuses.
+    float env = 0.42 * sqrt(max(sin(3.14159265 * pow(yc, 1.25)), 0.0));
+    float sinus = 0.5 - 0.5 * cos(6.2831853 * 4.0 * yc);
+    return env * (1.0 - 0.5 * sinus * sinus * sinus);
+  }
+  if (mat == 4 || mat == 5) return 0.30 * pow(max(sin(3.14159265 * yc), 0.0), 0.55);
+  return 0.30 * pow(max(sin(3.14159265 * yc), 0.0), 0.75) * (1.0 - 0.25 * yc);
+}
+// Distance inside the leaf outline, in leaf units (negative outside).
+float leafInside(int mat, vec2 uv) {
+  float x = abs(uv.x), y = uv.y;
+  float d = leafHalfWidth(mat, y) - x;
+  if (mat == 1) return min(d, y + 0.06 - 0.12 * leafGauss(x, 0.0, 0.1)); // heart-shaped base with a notch
+  return min(d, min(y, 1.0 - y));
+}
+bool isLeafMat(int mat) { return mat == 1 || mat == 2 || mat == 4 || mat == 5 || mat == 7 || mat == 9; }
+`;
+
 const SHADOW_SAMPLE = /* glsl */ `
 float sunShadow(vec3 wp, vec3 n) {
   if (uShadowsOn < 0.5) return 1.0;
@@ -153,8 +180,11 @@ varying vec4 vShade;
 varying float vMat;
 varying float vBirth;
 varying float vFade;
+varying vec3 vLeaf;  // leaf coordinates (x across, y base to tip), z > 0.5 for leaf vertices
 void main() {
   float s = iScaleFade.x * (1.0 - smoothstep(uShrink.x, uShrink.y, distance(iPosYaw.xyz, uCameraPos)));
+  float leafV = aShade.w * 255.0;
+  vLeaf = leafV < 252.0 ? vec3(aNormal.w * 0.6, leafV / 250.0 * 1.2 - 0.1, 1.0) : vec3(0.0);
   vec3 wp = rotY(position, iPosYaw.w) * s + iPosYaw.xyz;
   wp += windOffset(wp, aAux.x * 0.25 * s, aAux.y * 6.2831853);
   vWorldPos = wp;
@@ -172,6 +202,7 @@ ${COMMON}
 ${DITHER}
 ${SHADOW_SAMPLE}
 ${LIGHTING}
+${LEAF_SHAPES}
 uniform vec3 uMatLight[10];
 uniform vec3 uMatBase[10];
 uniform vec3 uMatShade[10];
@@ -181,10 +212,21 @@ varying vec4 vShade;
 varying float vMat;
 varying float vBirth;
 varying float vFade;
+varying vec3 vLeaf;
 void main() {
   lodDither(vFade);
   if (vBirth > uGrow + 0.002) discard;
   int mat = int(vMat + 0.5);
+  // Leaves: cut the smooth outline from the hull, anti-aliased through alpha-to-coverage.
+  bool leaf = vLeaf.z > 0.5 && isLeafMat(mat);
+  float inside = 1.0, edgePx = 1e3;
+  if (leaf) {
+    float d = leafInside(mat, vLeaf.xy);
+    float fd = max(fwidth(d), 1e-5);
+    edgePx = d / fd;
+    inside = clamp(edgePx + 0.5, 0.0, 1.0);
+    if (inside < 0.02) discard;
+  }
   vec3 lightCol = uMatLight[mat], baseCol = uMatBase[mat], shadeCol = uMatShade[mat];
   float hue = vShade.x * 2.0 - 1.0;
   float value = vShade.y + 0.5;
@@ -209,19 +251,30 @@ void main() {
     col += lightCol * trans * 0.35;
   }
 
-  // Ink: leaf outline (edge -> 1) and a lighter midrib (edge -> 0), only up close.
-  float e = vShade.w;
-  float fw = fwidth(e);
+  // Ink on leaves that are big enough on screen: a pixel-wide outline and a lighter midrib. Within a few metres a
+  // close-up detail level adds veins: palmate on ivy, pinnate on the others.
   float dist = distance(uCameraPos, vWorldPos);
-  float near = (1.0 - smoothstep(7.0, 16.0, dist)) * (1.0 - smoothstep(0.12, 0.3, fw)) * uLeafLines;
-  if (abs(e - 0.5) > 0.01 && near > 0.0) {
-    float outline = smoothstep(1.0 - 2.2 * fw, 1.0 - 0.7 * fw, e);
-    float rib = 1.0 - smoothstep(0.5 * fw, 1.6 * fw, e);
+  float leafPx = 1.0 / max(fwidth(vLeaf.y), 1e-5);  // leaf length on screen, pixels
+  float near = (1.0 - smoothstep(7.0, 16.0, dist)) * smoothstep(10.0, 22.0, leafPx) * uLeafLines;
+  if (leaf && near > 0.0) {
+    vec2 uv = vLeaf.xy;
+    float outline = 1.0 - smoothstep(0.9, 2.2, edgePx);
     col = mix(col, col * vec3(0.38, 0.46, 0.52), outline * near * 0.9);
-    col = mix(col, mix(col, lightCol, 0.6), rib * near * 0.45);
+    bool petal = mat == 4 || mat == 5;
+    float rib = (1.0 - smoothstep(0.5, 1.4, abs(uv.x) / max(fwidth(uv.x), 1e-5))) * step(0.0, uv.y) * step(uv.y, 0.93);
+    vec3 vein = mix(col, lightCol, 0.6);
+    if (!petal) col = mix(col, vein, rib * near * smoothstep(24.0, 48.0, leafPx) * 0.35);
+    float close = (1.0 - smoothstep(2.5, 5.0, dist)) * smoothstep(60.0, 120.0, leafPx) * near;
+    if (!petal && close > 0.0 && edgePx > 2.5) {
+      float vc = mat == 1 ? atan(abs(uv.x), uv.y + 0.05) / 1.5708 * 4.0  // ivy veins fan out from the base
+                          : (uv.y - abs(uv.x) * 1.2) * 7.0;                // the others branch off the midrib
+      float vd = abs(fract(vc + 0.5) - 0.5) / max(fwidth(vc), 1e-5);
+      float veins = (1.0 - smoothstep(0.35, 1.1, vd)) * smoothstep(0.015, 0.04, abs(uv.x));
+      col = mix(col, vein, veins * close * 0.35);
+    }
   }
   col = mix(col, uLodColor, uLodDebug * 0.65);
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col, inside);
 }
 `;
 
@@ -368,11 +421,16 @@ void main() {
 const SHADOW_FRAG_FOLIAGE = /* glsl */ `
 ${COMMON}
 ${DITHER}
+${LEAF_SHAPES}
 varying float vBirth;
 varying float vFade;
+varying float vMat;
+varying vec3 vLeaf;
 void main() {
   lodDither(vFade);
   if (vBirth > uGrow + 0.002) discard;
+  int mat = int(vMat + 0.5);
+  if (vLeaf.z > 0.5 && isLeafMat(mat) && leafInside(mat, vLeaf.xy) < 0.0) discard;  // leaf-shaped shadows
   gl_FragColor = vec4(1.0);
 }
 `;
@@ -395,6 +453,7 @@ function material(vertexShader, fragmentShader, uniforms, opts = {}) {
     fragmentShader,
     uniforms: { ...shared, uLodColor: { value: new THREE.Vector3(1, 1, 1) }, ...uniforms },
     side: opts.side ?? THREE.FrontSide,
+    alphaToCoverage: opts.alphaToCoverage ?? false,
   });
 }
 
@@ -402,7 +461,7 @@ function material(vertexShader, fragmentShader, uniforms, opts = {}) {
 const NO_SHRINK = [1e7, 2e7];
 export function foliageMaterial(shrink = NO_SHRINK) {
   return material(FOLIAGE_VERT, FOLIAGE_FRAG, { ...foliageUniforms, uShrink: { value: new THREE.Vector2(...shrink) } },
-    { side: THREE.DoubleSide });
+    { side: THREE.DoubleSide, alphaToCoverage: true });
 }
 export function foliageShadowMaterial(shrink = NO_SHRINK) {
   return material(FOLIAGE_VERT, SHADOW_FRAG_FOLIAGE, { uShrink: { value: new THREE.Vector2(...shrink) } }, { side: THREE.DoubleSide });
