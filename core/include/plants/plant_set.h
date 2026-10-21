@@ -16,6 +16,8 @@ enum Material : uint8_t {
     kMatFlowerWhite = 4,
     kMatFlowerYellow = 5,
     kMatFlowerCenter = 6,
+    kMatTreeLeaf = 7,
+    kMatBark = 8,
 };
 
 enum LeafShape : uint8_t { kShapeIvy = 0, kShapeBush = 1, kShapePetal = 2 };
@@ -31,6 +33,7 @@ struct StemNode {
 
 struct Stem {
     std::vector<int> nodes;  // polyline through StemNode indices (first may be the parent's node)
+    uint8_t mat = kMatStem;  // kMatStem for soft stems, kMatBark for tree trunks, limbs and roots
 };
 
 struct Leaf {
@@ -86,6 +89,8 @@ struct PlantSet {
     std::vector<Blade> blades;
     int climberCount = 0;
     int bushCount = 0;
+    int treeCount = 0;
+    int nextGroup = 1;  // foliage group ids for bushes and trees; group 0 is the climbers
 };
 
 }  // namespace plants

@@ -160,7 +160,8 @@ LodConfig configFor(int lod, const Params& p) {
         case 1: return {k1, std::min(1.9f, 0.92f / std::sqrt(k1)), true, 4, 2, 0.0045f, 0.5f, 1.3f, false, 0.45f, 1.6f, -1, 0.0f, false, 0.0f};
         // Bush clumps are already chunky at LOD 2; only the many small ivy clumps are merged.
         case 2: return {k2, 1.7f, true, 3, 3, 0.010f, 0.3f, 2.0f, true, 0.0f, 0.0f, 1, p[kParamIvyClumpCell] * 1.7f, true, 0.97f};
-        default: return {0.0f, 0.0f, true, 0, 1, 1.0f, 0.0f, 0.0f, true, 0.0f, 0.0f, 0, p[kParamLod3MergeCell], false, 1.0f};
+        // Only tree trunks are thick enough to keep stems at LOD 3; the crown would float without them.
+        default: return {0.0f, 0.0f, true, 3, 4, 0.07f, 0.0f, 0.0f, true, 0.0f, 0.0f, 0, p[kParamLod3MergeCell], false, 1.0f};
     }
 }
 
@@ -180,7 +181,7 @@ void emitLeaf(const Leaf& l, const LeafTemplate& t, float scale, MeshBuffers& m)
     for (uint32_t idx : t.tris) m.indices.push_back(first + idx);
 }
 
-void emitTube(const PlantSet& s, const Stem& stem, int sides, int stride, float minRadius, float phase, MeshBuffers& m) {
+void emitTube(const PlantSet& s, const Stem& stem, int baseSides, int stride, float minRadius, float phase, MeshBuffers& m) {
     std::vector<int> ids;
     for (size_t k = 0; k < stem.nodes.size(); k += stride) ids.push_back(stem.nodes[k]);
     if (ids.back() != stem.nodes.back()) ids.push_back(stem.nodes.back());
@@ -189,6 +190,9 @@ void emitTube(const PlantSet& s, const Stem& stem, int sides, int stride, float 
     while (keep < ids.size() && (keep == 0 || s.nodes[ids[keep]].radius >= minRadius)) ++keep;
     ids.resize(keep);
     if (ids.size() < 2) return;
+    // Thick trunks and roots get twice the sides so they stay round up close.
+    const int sides = baseSides * (s.nodes[ids[1]].radius > 0.06f ? 2 : 1);
+    const float value = 0.9f + 0.2f * phase;
 
     Vec3 u = s.nodes[ids[0]].normal;
     uint32_t prevRing = 0;
@@ -204,7 +208,7 @@ void emitTube(const PlantSet& s, const Stem& stem, int sides, int stride, float 
         for (int k = 0; k < sides; ++k) {
             float ang = 2 * kPi * k / sides;
             Vec3 dir = u * std::cos(ang) + v * std::sin(ang);
-            m.addVertex(node.pos + dir * r, dir, 0.0f, 1.0f, 0.85f, 0.5f, node.flex, phase, node.birth, kMatStem);
+            m.addVertex(node.pos + dir * r, dir, 0.0f, value, 0.85f, 0.5f, node.flex, phase, node.birth, stem.mat);
         }
         if (i > 0) {
             for (int k = 0; k < sides; ++k) {

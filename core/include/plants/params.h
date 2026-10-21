@@ -32,6 +32,18 @@ namespace plants {
     X(BushLeafSize, "bush.leafSize", 0.095f, 0.03f, 0.3f)         \
     X(BushLeafDensity, "bush.leafDensity", 230, 40, 800)          \
     X(BushFlowering, "bush.flowering", 0.35f, 0, 1)               \
+    X(TreeCount, "tree.count", 2, 0, 12)                          \
+    X(TreeGroundCount, "tree.groundCount", 1, 0, 8)               \
+    X(TreeHeight, "tree.height", 7.0f, 1.5f, 20)                  \
+    X(TreeCanopy, "tree.canopy", 0.52f, 0.2f, 0.8f)               \
+    X(TreeTrunk, "tree.trunk", 0.028f, 0.01f, 0.08f)              \
+    X(TreeClumps, "tree.clumps", 13, 3, 30)                       \
+    X(TreeLeafSize, "tree.leafSize", 0.17f, 0.05f, 0.5f)          \
+    X(TreeLeafDensity, "tree.leafDensity", 60, 10, 300)           \
+    X(TreeLean, "tree.lean", 0.35f, 0, 1)                         \
+    X(TreeRoots, "tree.roots", 6, 0, 16)                          \
+    X(TreeRootReach, "tree.rootReach", 8.0f, 0, 30)               \
+    X(TreeRootBranching, "tree.rootBranching", 0.7f, 0, 2)        \
     X(GrassBlades, "grass.blades", 18, 3, 40)                     \
     X(GrassHeight, "grass.height", 0.26f, 0.05f, 1.2f)            \
     X(GrassFlowerChance, "grass.flowerChance", 0.3f, 0, 1)        \

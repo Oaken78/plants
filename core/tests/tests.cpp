@@ -1,9 +1,11 @@
 // Core tests. Built with em++ and run under node (see tools/build.ps1), so no native compiler is needed.
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #include "plants/api.h"
 #include "plants/bvh.h"
+#include "plants/plant_set.h"
 
 using namespace plants;
 
@@ -29,9 +31,9 @@ struct TestHost {
         tags.push_back(tag);
         tags.push_back(tag);
     }
-    TestHost() {
+    explicit TestHost(float y = 3) {
         quad({-8, 0, 8}, {8, 0, 8}, {8, 0, -8}, {-8, 0, -8}, kTagGround);
-        float x = 2, y = 3, z = 2;
+        float x = 2, z = 2;
         quad({-x, 0, z}, {x, 0, z}, {x, y, z}, {-x, y, z}, kTagSolid);      // +z
         quad({x, 0, -z}, {-x, 0, -z}, {-x, y, -z}, {x, y, -z}, kTagSolid);  // -z
         quad({x, 0, z}, {x, 0, -z}, {x, y, -z}, {x, y, z}, kTagSolid);      // +x
@@ -100,12 +102,12 @@ static void testGrowth() {
         CHECK(finite);
         CHECK(inRange);
         const float* b = plants_mesh_bounds(ctx, lod);
-        CHECK(b[4] < 8.0f);  // nothing grows far above the 3 m box
+        CHECK(b[4] < 16.0f);  // the tallest things are trees on the 3 m box (tree.height 7 x size <= 1.3, +15%)
     }
 
-    // Plants hug the host: every LOD0 vertex is within a metre of some surface... and inside the ground area.
+    // Everything stays around the 16 x 16 m ground patch (tree crowns may overhang its edge).
     const float* b = plants_mesh_bounds(ctx, 0);
-    CHECK(b[0] > -9 && b[2] > -9 && b[3] < 9 && b[5] < 9);
+    CHECK(b[0] > -13 && b[2] > -13 && b[3] < 13 && b[5] < 13);
 
     uint64_t first = hashMesh(ctx, 0);
     plants_grow_on_host(ctx, 42);
@@ -138,10 +140,91 @@ static void testStandalone() {
     plants_destroy(ctx);
 }
 
+// Lowest bark vertex of LOD 0 that lies next to the box walls (outside the box, within 1 m of it).
+static float lowestBarkBesideWalls(PlantsContext* ctx) {
+    const float* p = plants_mesh_positions(ctx, 0);
+    const uint8_t* aux = plants_mesh_aux(ctx, 0);
+    float lowest = 1e9f;
+    for (int i = 0; i < plants_mesh_vertex_count(ctx, 0); ++i) {
+        if (aux[i * 4 + 3] != kMatBark) continue;
+        float x = std::fabs(p[i * 3]), y = p[i * 3 + 1], z = std::fabs(p[i * 3 + 2]);
+        bool beside = std::max(x, z) > 2.0f && std::max(x, z) < 3.0f;
+        if (beside) lowest = std::min(lowest, y);
+    }
+    return lowest;
+}
+
+static int paramId(const char* name) {
+    for (int i = 0; i < plants_param_count(); ++i)
+        if (std::strcmp(plants_param_name(i), name) == 0) return i;
+    return -1;
+}
+
+static void testTrees() {
+    PlantsContext* ctx = plants_create();
+    float prevHeight = 0;
+    for (float size : {0.45f, 1.0f, 1.8f}) {
+        int leaves = plants_make_tree(ctx, 11, size);
+        const float* b = plants_mesh_bounds(ctx, 0);
+        std::printf("tree size %.2f: %d leaves, %.1f m tall, lod tris %d/%d/%d/%d\n", size, leaves, b[4],
+                    plants_mesh_index_count(ctx, 0) / 3, plants_mesh_index_count(ctx, 1) / 3,
+                    plants_mesh_index_count(ctx, 2) / 3, plants_mesh_index_count(ctx, 3) / 3);
+        CHECK(leaves > 300);
+        CHECK(b[4] > prevHeight);  // bigger size, taller tree
+        prevHeight = b[4];
+        CHECK(plants_mesh_index_count(ctx, 3) > 0);
+        // LOD 3 keeps the trunk: some bark below the crown.
+        const uint8_t* aux = plants_mesh_aux(ctx, 3);
+        bool trunk = false;
+        for (int i = 0; i < plants_mesh_vertex_count(ctx, 3); ++i) trunk = trunk || aux[i * 4 + 3] == kMatBark;
+        CHECK(trunk);
+    }
+
+    // Only trees, on the roof: low roofs send roots down the walls, high roofs keep them up.
+    for (const char* name : {"climber.seeds", "climber.roofSeeds", "bush.count", "tree.groundCount"})
+        plants_set_param(ctx, paramId(name), 0);
+    plants_set_param(ctx, paramId("tree.count"), 1);
+    for (float roof : {3.0f, 20.0f}) {
+        TestHost host(roof);
+        plants_set_host(ctx, host.pos.data(), int(host.pos.size() / 3), host.idx.data(), int(host.idx.size()), host.tags.data());
+        plants_grow_on_host(ctx, 5);
+        float lowest = lowestBarkBesideWalls(ctx);
+        std::printf("tree on a %.0f m roof: %d tree(s), lowest root beside the walls at %.2f m\n", roof,
+                    plants_stat(ctx, PLANTS_STAT_TREES), lowest);
+        CHECK(plants_stat(ctx, PLANTS_STAT_TREES) == 1);
+        if (roof < 5) CHECK(lowest < 0.3f);       // reached the ground
+        else CHECK(lowest > roof - 3.0f);         // stayed up on the roof
+    }
+
+    // Root branching: forks and rootlets add bark next to the walls.
+    TestHost low(3.0f);
+    plants_set_host(ctx, low.pos.data(), int(low.pos.size() / 3), low.idx.data(), int(low.idx.size()), low.tags.data());
+    auto barkBesideWalls = [&]() {
+        const float* p = plants_mesh_positions(ctx, 0);
+        const uint8_t* aux = plants_mesh_aux(ctx, 0);
+        int n = 0;
+        for (int i = 0; i < plants_mesh_vertex_count(ctx, 0); ++i) {
+            float m = std::max(std::fabs(p[i * 3]), std::fabs(p[i * 3 + 2]));
+            if (aux[i * 4 + 3] == kMatBark && m > 2.0f && m < 3.0f && p[i * 3 + 1] < 2.8f) ++n;
+        }
+        return n;
+    };
+    plants_set_param(ctx, paramId("tree.rootBranching"), 0);
+    plants_grow_on_host(ctx, 5);
+    int plain = barkBesideWalls();
+    plants_set_param(ctx, paramId("tree.rootBranching"), 1.5f);
+    plants_grow_on_host(ctx, 5);
+    int branched = barkBesideWalls();
+    std::printf("root bark on the walls: %d vertices unbranched, %d branched\n", plain, branched);
+    CHECK(branched > plain * 2);
+    plants_destroy(ctx);
+}
+
 int main() {
     testBvh();
     testGrowth();
     testStandalone();
+    testTrees();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

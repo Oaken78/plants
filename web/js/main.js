@@ -7,22 +7,28 @@ import { FlyCam } from './flycam.js';
 import { PostPass } from './post.js';
 import { PALETTE, hexToLinear } from './palette.js';
 import * as M from './materials.js';
-import { WORLD, terrainHeight, houseCell, makeBushCell, makeGrassCell, buildTerrain, buildMountains } from './world.js';
+import { WORLD, terrainHeight, houseCell, makeBushCell, makeGrassCell, makeTreeCell, buildTerrain, buildMountains } from './world.js';
 
 // LOD switch distances in metres: LOD i is used while distance < ranges[i].
 const RANGES = {
   house: [90, 2900],
   housePlants: [24, 65, 190, 2900],
   bush: [26, 70, 200, 1100],
+  tree: [34, 100, 340, 2600],
   grass: [26, 52],
 };
-const HERO_PARAMS = { 'climber.seeds': 34, 'climber.roofSeeds': 10, 'climber.budget': 20000, 'bush.count': 22 };
+const HERO_PARAMS = { 'climber.seeds': 34, 'climber.roofSeeds': 10, 'climber.budget': 20000, 'bush.count': 22, 'tree.count': 3, 'tree.groundCount': 2 };
 const SHADOW_SIZE = 4096;
 const SHADOW_HALF = 85;
 
 const $ = (id) => document.getElementById(id);
 const status = (text) => { $('loading-text').textContent = text; };
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+// Lets the loading text repaint between generation steps. Background tabs pause animation frames, so a timer
+// keeps loading going there too.
+const nextFrame = () => new Promise((r) => {
+  requestAnimationFrame(() => r());
+  setTimeout(r, 120);
+});
 
 // ---------------------------------------------------------------- renderer and targets
 
@@ -152,7 +158,7 @@ function withGroundPatch(host) {
 // ---------------------------------------------------------------- build
 
 const skyColor = new THREE.Vector3(...hexToLinear(PALETTE.skyHorizon));
-let generator, houseLayer, bushLayer, grassLayer, houseGeoms, heroSeed = 1;
+let generator, houseLayer, bushLayer, treeLayer, grassLayer, houseGeoms, heroSeed = 1;
 const layers = [];
 const genStats = {};
 
@@ -216,11 +222,18 @@ async function build() {
   styles.forEach((style, i) => bushVariants.push({ parts: [plantPart(generator.makeBush(500 + i * 31, style, 1), RANGES.bush)] }));
   bushLayer = new LodLayer({ name: 'bushes', cellSize: 32, maxDistance: 1100, variants: bushVariants,
     generateCell: makeBushCell(bushVariants.length, 32), yRange: [-1, 4] });
+  status('Growing trees...');
+  await nextFrame();
+  // Small, medium and large trees, a few seeds each.
+  const treeSizes = [0.4, 0.5, 0.75, 0.9, 1.0, 1.15, 1.35, 1.6, 1.85];
+  const treeVariants = treeSizes.map((size, i) => ({ parts: [plantPart(generator.makeTree(300 + i * 23, size), RANGES.tree)] }));
+  treeLayer = new LodLayer({ name: 'trees', cellSize: 48, maxDistance: 2600, variants: treeVariants,
+    generateCell: makeTreeCell(treeVariants.length, 48), yRange: [-1, 26] });
   const grassVariants = [];
   for (let i = 0; i < 8; i++) grassVariants.push({ parts: [plantPart(generator.makeGrass(900 + i * 13), RANGES.grass, [30, 50])] });
   grassLayer = new LodLayer({ name: 'grass', cellSize: 6, maxDistance: 52, variants: grassVariants,
     generateCell: makeGrassCell(grassVariants.length, 6), yRange: [-1, 1.5], fade: 0.25 });
-  layers.push(houseLayer, bushLayer, grassLayer);
+  layers.push(houseLayer, treeLayer, bushLayer, grassLayer);
   for (const l of layers) scene.add(l.group);
 
   status('Shaping the terrain...');
@@ -337,7 +350,7 @@ function setupUi(flycam) {
 
 function showGenStats() {
   const h = genStats.hero;
-  $('gen').textContent = `hero: ${h.climbers} climbers, ${h.bushes} bushes, ${h.leaves.toLocaleString()} leaves, ` +
+  $('gen').textContent = `hero: ${h.climbers} climbers, ${h.trees} trees, ${h.bushes} bushes, ${h.leaves.toLocaleString()} leaves, ` +
     `${h.flowers} flowers in ${h.ms.toFixed(0)} ms - LOD tris ${h.tris.map((t) => t.toLocaleString()).join(' / ')}`;
 }
 
@@ -393,7 +406,7 @@ function frame(flycam) {
     const p = camera.position;
     $('stats').textContent =
       `${fpsAvg.toFixed(0)} fps | ${calls} draws | ${(tris / 1e6).toFixed(2)} M tris\n` +
-      `houses ${houseLayer.stats.instances}  bushes ${bushLayer.stats.instances}  grass ${grassLayer.stats.instances}\n` +
+      `houses ${houseLayer.stats.instances}  trees ${treeLayer.stats.instances}  bushes ${bushLayer.stats.instances}  grass ${grassLayer.stats.instances}\n` +
       `parts by LOD  0:${lod[0]}  1:${lod[1]}  2:${lod[2]}  3:${lod[3]}\n` +
       `pos ${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}`;
   }

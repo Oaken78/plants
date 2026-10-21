@@ -47,8 +47,23 @@ enum BushStyle { kBushRound = 0, kBushTall = 1, kBushSpreading = 2, kBushFloweri
 // One bush rooted at base, growing along up. Returns the group id it used.
 int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& up, float scale, int style, PlantSet& out);
 
-// Bushes on the host: on the ground patch near walls and on roofs/ledges.
-void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out);
+// Leaves over the outer surface of the clumps [firstClump, end): the shared foliage of bushes and trees.
+// aoFrom/aoTo are heights along up where the foliage starts and ends (darker and earlier at the bottom).
+void coverClumpsWithLeaves(Rng& rng, PlantSet& out, size_t firstClump, const Vec3& base, const Vec3& up, float aoFrom,
+                           float aoTo, float leafSize, float density, uint8_t mat, uint8_t shape, int group,
+                           float birthStart);
+
+// Bushes on the host: on the ground patch near walls and on roofs/ledges, keeping clear of tree trunks.
+void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, const std::vector<Vec3>& avoid, PlantSet& out);
+
+// A tree rooted at base. With a host, it leans toward open sky, fits under overhangs, and its roots follow the
+// host's surfaces; roots of a tree less than tree.rootReach above the ground climb down to reach it.
+// size scales tree.height (about 0.4 small, 1 medium, 1.8 large). Returns the foliage group id.
+int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, PlantSet& out);
+
+// Trees on the host: on roofs and ledges (preferring spots near an edge) and on the ground patch.
+// Appends each trunk position to trunks.
+void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out, std::vector<Vec3>& trunks);
 
 // A tuft of grass blades (and sometimes a wild flower) at the origin.
 void growGrassTuft(const Params& p, Rng& rng, PlantSet& out);

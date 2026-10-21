@@ -85,6 +85,14 @@ static bool overlaps(const std::vector<PlacedBush>& placed, const Vec3& p, float
     return false;
 }
 
+static bool nearTrunk(const std::vector<Vec3>& trunks, const Vec3& p, float r) {
+    for (const auto& t : trunks) {
+        float m = r * 0.6f + 0.5f;
+        if (length2(projectOnPlane(t - p, kUp)) < m * m) return true;
+    }
+    return false;
+}
+
 static int pickStyle(Rng& rng, float flowering, bool onRoof) {
     if (rng.chance(flowering)) return kBushFlowering;
     float r = rng.uniform();
@@ -94,7 +102,7 @@ static int pickStyle(Rng& rng, float flowering, bool onRoof) {
     return kBushSpreading;
 }
 
-void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out) {
+void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, const std::vector<Vec3>& avoid, PlantSet& out) {
     int total = p.i(kParamBushCount);
     int roofCount = int(total * p[kParamBushRoofShare] + 0.5f);
     int groundCount = total - roofCount;
@@ -122,7 +130,7 @@ void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, Plan
             if (!bvh.raycast(base + kUp * 1.0f, kDown, 2.0f, g, kMaskGround | kMaskSolid) || g.tag != kTagGround) continue;
             base = g.point;
         }
-        if (overlaps(placed, base, r)) continue;
+        if (overlaps(placed, base, r) || nearTrunk(avoid, base, r)) continue;
         Rng bushRng = rng.fork(uint32_t(1000 + placed.size()));
         growBush(p, bushRng, base - kUp * 0.03f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], false), out);
         placed.push_back({base, r});
@@ -153,7 +161,7 @@ void scatterBushesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, Plan
         }
         if (!supported) continue;
         float r = baseRadius * scale;
-        if (overlaps(placed, s.point, r)) continue;
+        if (overlaps(placed, s.point, r) || nearTrunk(avoid, s.point, r)) continue;
         Rng bushRng = rng.fork(uint32_t(5000 + placed.size()));
         growBush(p, bushRng, s.point - kUp * 0.02f, kUp, scale, pickStyle(rng, p[kParamBushFlowering], true), out);
         placed.push_back({s.point, r});

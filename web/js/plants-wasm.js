@@ -66,6 +66,10 @@ export class PlantGenerator {
     this.m._plants_make_bush(this.ctx, seed >>> 0, style, scale);
     return this.collect();
   }
+  makeTree(seed, size) {
+    this.m._plants_make_tree(this.ctx, seed >>> 0, size);
+    return this.collect();
+  }
   makeGrass(seed) {
     this.m._plants_make_grass(this.ctx, seed >>> 0);
     return this.collect();
@@ -73,7 +77,7 @@ export class PlantGenerator {
 
   stats() {
     const s = (i) => this.m._plants_stat(this.ctx, i);
-    return { nodes: s(0), stems: s(1), leaves: s(2), flowers: s(3), clumps: s(4), blades: s(5), climbers: s(6), bushes: s(7) };
+    return { nodes: s(0), stems: s(1), leaves: s(2), flowers: s(3), clumps: s(4), blades: s(5), climbers: s(6), bushes: s(7), trees: s(8) };
   }
 
   // One THREE.BufferGeometry per LOD (empty LODs give null).

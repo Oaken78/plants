@@ -34,10 +34,13 @@ export const shared = {
 };
 
 // Foliage palette indexed by the core's material id (core/include/plants/plant_set.h: Material).
-//                 0 stem          1 ivy leaf       2 bush leaf       3 grass           4 white flower  5 yellow flower   6 flower centre
-const FOLIAGE_LIGHT = ['#8e7a58', PALETTE.ivyLight, PALETTE.bushLight, PALETTE.grassLight, '#fffdf6', '#ffe27e', '#f4b450'];
-const FOLIAGE_BASE = [PALETTE.stem, PALETTE.ivy, PALETTE.bush, PALETTE.grass, PALETTE.flowerWhite, PALETTE.flowerYellow, PALETTE.flowerCenter];
-const FOLIAGE_SHADE = ['#46404e', PALETTE.ivyShadow, PALETTE.bushShadow, PALETTE.grassShadow, '#a9b6d6', '#b49a6c', '#a0674a'];
+//   0 stem, 1 ivy leaf, 2 bush leaf, 3 grass, 4 white flower, 5 yellow flower, 6 flower centre, 7 tree leaf, 8 bark
+const FOLIAGE_LIGHT = ['#8e7a58', PALETTE.ivyLight, PALETTE.bushLight, PALETTE.grassLight, '#fffdf6', '#ffe27e', '#f4b450',
+  PALETTE.treeLight, PALETTE.barkLight];
+const FOLIAGE_BASE = [PALETTE.stem, PALETTE.ivy, PALETTE.bush, PALETTE.grass, PALETTE.flowerWhite, PALETTE.flowerYellow,
+  PALETTE.flowerCenter, PALETTE.tree, PALETTE.bark];
+const FOLIAGE_SHADE = ['#46404e', PALETTE.ivyShadow, PALETTE.bushShadow, PALETTE.grassShadow, '#a9b6d6', '#b49a6c', '#a0674a',
+  PALETTE.treeShadow, PALETTE.barkShadow];
 
 const foliageUniforms = {
   uMatLight: { value: FOLIAGE_LIGHT.map(lin) },
@@ -168,9 +171,9 @@ ${COMMON}
 ${DITHER}
 ${SHADOW_SAMPLE}
 ${LIGHTING}
-uniform vec3 uMatLight[7];
-uniform vec3 uMatBase[7];
-uniform vec3 uMatShade[7];
+uniform vec3 uMatLight[9];
+uniform vec3 uMatBase[9];
+uniform vec3 uMatShade[9];
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec4 vShade;
@@ -190,11 +193,17 @@ void main() {
   baseCol = mix(baseCol, shadeCol, max(-hue, 0.0) * 0.3);
   shadeCol = mix(shadeCol, baseCol * vec3(0.7, 0.8, 0.95), max(hue, 0.0) * 0.25);
   vec3 n = normalize(vNormal);
-  vec3 col = toonLight(shadeCol, baseCol, lightCol, n, vWorldPos, ao, mat == 0 ? 0.0 : 1.0) * value;
+  bool woody = mat == 0 || mat == 8;
+  vec3 col = toonLight(shadeCol, baseCol, lightCol, n, vWorldPos, ao, woody ? 0.0 : 1.0) * value;
+  if (mat == 8) {
+    // Bark: soft vertical streaks so trunks and roots are not flat tubes up close.
+    float streak = fract(sin(dot(floor(vec2(atan(n.z, n.x) * 6.0, vWorldPos.y * 1.3)), vec2(12.9898, 78.233))) * 43758.5453);
+    col *= 0.9 + 0.12 * streak;
+  }
 
   // Back-lit leaves glow (sub-surface look of sunlit foliage).
   vec3 v = normalize(uCameraPos - vWorldPos);
-  if (mat >= 1 && mat <= 3) {
+  if ((mat >= 1 && mat <= 3) || mat == 7) {
     float trans = pow(max(dot(-v, uSunDir), 0.0), 5.0) * (1.0 - max(dot(n, uSunDir), 0.0));
     col += lightCol * trans * 0.35;
   }

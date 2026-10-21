@@ -1,13 +1,15 @@
 # Overgrowth: procedural anime plants
 
-A procedural plant generator that grows **climbing plants (ivy)** and **bushes** (plus grass tufts and
-wild flowers) on arbitrary 3D models. It is styled after "The Last Signal" concept sheet: lush ivy draping over
+A procedural plant generator that grows **climbing plants (ivy)**, **bushes** and **trees** (plus grass tufts
+and wild flowers) on arbitrary 3D models. Trees can grow on buildings too, sending their roots down the walls to
+the ground. It is styled after "The Last Signal" concept sheet: lush ivy draping over
 weathered concrete, cauliflower-shaped foliage masses, white and yellow flowers, blue-tinted shadows and ink lines.
 
 - **Core:** portable C++17 with no dependencies, compiled to WebAssembly today. It is written to become a Godot
   GDExtension later; see [docs/godot-port.md](docs/godot-port.md).
 - **Tech demo:** a three.js fly-through with the proof-of-concept house, a streamed town of hundreds of overgrown
-  houses, thousands of bushes and a grass meadow, using a four-level LOD scheme with dithered cross-fades.
+  houses, groves of trees in nine sizes, thousands of bushes and a grass meadow, using a four-level LOD scheme with
+  dithered cross-fades.
 
 ## Run the demo
 
@@ -99,7 +101,8 @@ core/                 portable C++ generator (no dependencies)
     bvh.h, math.h, rng.h
   src/
     climber.cpp       ivy growth
-    bush.cpp          bushes and grass tufts
+    bush.cpp          bushes, grass tufts, and the leaf cover shared with trees
+    tree.cpp          trees: crown, pipe-model skeleton, ground-seeking roots
     scatter.cpp       where plants start on a host mesh
     shading.cpp       "cloud" normals and occlusion from clumps
     mesher.cpp        PlantSet -> LOD 0..3 meshes
@@ -145,6 +148,26 @@ cover only the outer surface of the clump union, and branches run from the root 
 gather at the foot of walls and on roofs and ledges that have head room and support. There are four styles: round,
 tall, spreading and flowering.
 
+**Trees.** The crown comes first: overlapping clumps in a wide rounded envelope, covered with the same
+cloud-shaded leaves as the bushes. A skeleton is then built to carry it:
+- a slightly curved trunk up to a fork,
+- two to five limbs, each serving the clumps on one side,
+- a branch into every clump, and twigs inside it.
+
+Branch thickness follows the pipe model: radius grows with the square root of the foliage a branch carries, and
+the trunk flares at its base. Sizes run from about 3 m saplings to 13 m giants (`tree.height` x size).
+
+On a host, trees grow on roofs and ledges, preferring spots near an edge, and on the ground patch away from the
+walls. They lean toward open sky and shrink to fit under overhangs. Their roots crawl over the host's surfaces:
+- **Close to the ground** (less than `tree.rootReach`, 8 m by default): roots steer toward the ground. They run
+  across the roof, climb over parapets, run down the walls and dig into the soil.
+- **Higher up:** roots only spread over the roof.
+- **On the ground:** roots spread a short way and sink in.
+
+Roots heading for the ground fork into child roots that also seek it, so they fan out into a fig-like net over the
+wall. Thin rootlets web the surface between them, and `tree.rootBranching` sets how much of both. Free-standing
+trees get a forked root flare.
+
 **Grass.** Tufts of curved, tapered blades with up-facing normals, so they shade like the ground they stand on, plus
 wild flowers on stalks.
 
@@ -164,7 +187,11 @@ Each generated plant set is meshed four times from the same data:
 | 0 | Every leaf (15-vertex lobed ivy, 11-vertex bush leaf), 6-sided stems, full flowers | < 24 m | ~1.0 M tris | ~12 k |
 | 1 | 30% of leaves (a deterministic subset), enlarged to keep coverage, simpler outlines, 4-sided thick stems | < 65 m | ~145 k | ~1.5 k |
 | 2 | Lumpy puffs from the clump field (ivy clumps merged), 6% big silhouette leaves, flower dots, trunks | < 190 m | ~63 k | ~1 k |
-| 3 | Merged low-poly puffs only | < 2.9 km | ~1.8 k | 80 |
+| 3 | Merged low-poly puffs only (plus tree trunks) | < 2.9 km | ~1.8 k | 80 |
+
+Trees use the same four levels at longer distances (34 m, 100 m, 340 m, then out to 2.6 km). A 7 m tree is about
+105 k, 13 k, 4 k and 220 triangles. Bark tubes keep their trunk at LOD 3 so distant crowns don't float, and thick
+trunks and roots get twice the sides up close.
 
 - **Shared rendering:** every LOD of a plant shares the same palette, the same cloud normals and the same wind
   (vertex flex and phase are baked per vertex), so a switch changes detail, not look.

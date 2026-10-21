@@ -30,7 +30,9 @@ browser-specific part (three.js rendering) maps one-to-one onto built-in Godot f
    - `ARRAY_VERTEX` from the positions.
    - `ARRAY_NORMAL` from the snorm normals.
    - `ARRAY_CUSTOM0` from `shade`, as RGBA8 unorm: hue, value, ao, edge.
-   - `ARRAY_CUSTOM1` from `aux`, as RGBA8 unorm: flex, phase, birth, material id.
+   - `ARRAY_CUSTOM1` from `aux`, as RGBA8 unorm: flex, phase, birth, material id. Material ids are listed in
+     `core/include/plants/plant_set.h`: 0 stem, 1 ivy leaf, 2 bush leaf, 3 grass, 4 to 6 flower parts, 7 tree
+     leaf, 8 bark.
    - `ARRAY_INDEX`.
 
    Pass `ARRAY_FORMAT_CUSTOM0_RGBA8_UNORM | ARRAY_FORMAT_CUSTOM1_RGBA8_UNORM` in the format flags.

@@ -62,10 +62,12 @@ void plants_set_host(PlantsContext* ctx, const float* positions, int vertexCount
 int plants_grow_on_host(PlantsContext* ctx, uint32_t seed) {
     ctx->set = PlantSet{};
     Rng rng(seed);
-    Rng seedRng = rng.fork(1), climbRng = rng.fork(2), bushRng = rng.fork(3);
+    Rng seedRng = rng.fork(1), climbRng = rng.fork(2), bushRng = rng.fork(3), treeRng = rng.fork(4);
     std::vector<ClimberSeed> seeds = pickClimberSeeds(ctx->bvh, ctx->params, seedRng);
     growClimbers(ctx->bvh, ctx->params, climbRng, seeds, ctx->set);
-    scatterBushesOnHost(ctx->bvh, ctx->params, bushRng, ctx->set);
+    std::vector<Vec3> trunks;
+    scatterTreesOnHost(ctx->bvh, ctx->params, treeRng, ctx->set, trunks);
+    scatterBushesOnHost(ctx->bvh, ctx->params, bushRng, trunks, ctx->set);
     buildAllLods(ctx);
     return int(ctx->set.leaves.size());
 }
@@ -74,6 +76,14 @@ int plants_make_bush(PlantsContext* ctx, uint32_t seed, int style, float scale) 
     ctx->set = PlantSet{};
     Rng rng(seed);
     growBush(ctx->params, rng, Vec3{0, 0, 0}, Vec3{0, 1, 0}, scale, style % kBushStyleCount, ctx->set);
+    buildAllLods(ctx);
+    return int(ctx->set.leaves.size());
+}
+
+int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size) {
+    ctx->set = PlantSet{};
+    Rng rng(seed);
+    growTree(ctx->params, rng, nullptr, Vec3{0, 0, 0}, size, ctx->set);
     buildAllLods(ctx);
     return int(ctx->set.leaves.size());
 }
@@ -107,6 +117,7 @@ int plants_stat(PlantsContext* ctx, int stat) {
         case PLANTS_STAT_BLADES: return int(s.blades.size());
         case PLANTS_STAT_CLIMBERS: return s.climberCount;
         case PLANTS_STAT_BUSHES: return s.bushCount;
+        case PLANTS_STAT_TREES: return s.treeCount;
         default: return 0;
     }
 }

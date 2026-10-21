@@ -25,7 +25,7 @@ $opt = if ($Debug) { @('-O1', '-g', '-sASSERTIONS=2') } else { @('-O3', '-flto')
 $exports = @(
     'plants_create', 'plants_destroy', 'plants_param_count', 'plants_param_name', 'plants_param_default',
     'plants_param_min', 'plants_param_max', 'plants_set_param', 'plants_get_param', 'plants_reset_params',
-    'plants_set_host', 'plants_grow_on_host', 'plants_make_bush', 'plants_make_grass', 'plants_lod_count',
+    'plants_set_host', 'plants_grow_on_host', 'plants_make_bush', 'plants_make_tree', 'plants_make_grass', 'plants_lod_count',
     'plants_mesh_vertex_count', 'plants_mesh_index_count', 'plants_mesh_positions', 'plants_mesh_normals',
     'plants_mesh_shade', 'plants_mesh_aux', 'plants_mesh_indices', 'plants_mesh_bounds', 'plants_stat',
     'malloc', 'free'

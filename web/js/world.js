@@ -153,6 +153,29 @@ export function makeBushCell(variantCount, cellSize) {
   };
 }
 
+// Trees gather in groves and line the edges of villages; sizes come from the variant (small to large).
+export function makeTreeCell(variantCount, cellSize) {
+  return (cx, cz) => {
+    const out = [];
+    const x0 = cx * cellSize, z0 = cz * cellSize;
+    const grove = fbm((x0 + cellSize / 2) * 0.006 - 13, (z0 + cellSize / 2) * 0.006 + 4, 3);
+    const count = Math.floor(hash2(cx, cz, 31) * 7 * smoothstep(0.45, 0.68, grove)) + (hash2(cx, cz, 32) < 0.25 ? 1 : 0);
+    for (let k = 0; k < count; k++) {
+      const x = x0 + hash2(cx * 53 + k, cz, 33) * cellSize;
+      const z = z0 + hash2(cx, cz * 53 + k, 34) * cellSize;
+      if (houseProximity(x, z).nearest < 15) continue; // houses grow their own trees
+      if (Math.hypot(x, z) < 24) continue;            // keep the hero house in the open
+      out.push({
+        x, z, y: terrainHeight(x, z) - 0.1,
+        yaw: hash2(cx + 3 * k, cz - k, 35) * Math.PI * 2,
+        scale: 0.85 + hash2(cx - k, cz + 2 * k, 36) * 0.35,
+        variant: Math.floor(hash2(cx + 11 * k, cz, 37) * variantCount),
+      });
+    }
+    return out;
+  };
+}
+
 export function makeGrassCell(variantCount, cellSize) {
   return (cx, cz) => {
     const out = [];

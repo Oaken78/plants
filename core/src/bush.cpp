@@ -25,8 +25,51 @@ BushShape shapeFor(int style, float r) {
 
 }  // namespace
 
+void coverClumpsWithLeaves(Rng& rng, PlantSet& out, size_t firstClump, const Vec3& base, const Vec3& up, float aoFrom,
+                           float aoTo, float leafSize, float density, uint8_t mat, uint8_t shape, int group,
+                           float birthStart) {
+    const size_t lastClump = out.clumps.size();
+    for (size_t ci = firstClump; ci < lastClump; ++ci) {
+        const Clump c = out.clumps[ci];
+        float r = c.radii.x;
+        int count = int(4 * kPi * r * r * density * 0.8f);
+        for (int k = 0; k < count; ++k) {
+            Vec3 d = rng.unitVector();
+            Vec3 pos = c.center + Vec3{d.x * r, d.y * c.radii.y, d.z * r} * rng.range(0.8f, 1.03f);
+            float height = dot(pos - base, up);
+            if (height < 0.03f) continue;
+            bool buried = false;
+            for (size_t cj = firstClump; cj < lastClump && !buried; ++cj) {
+                if (cj == ci) continue;
+                const Clump& o = out.clumps[cj];
+                buried = length2(pos - o.center) < (o.radii.x * 0.9f) * (o.radii.x * 0.9f);
+            }
+            if (buried) continue;
+            // Occlusion and growth order run from the bottom of the foliage (aoFrom) to its top (aoTo).
+            float h01 = saturate((height - aoFrom) / std::max(aoTo - aoFrom, 0.05f));
+            Leaf leaf;
+            leaf.pos = pos;
+            leaf.normal = normalize(d + rng.unitVector() * 0.55f + up * 0.15f, d);
+            leaf.forward = normalize(projectOnPlane(rng.unitVector() + up * 0.3f, leaf.normal), anyPerpendicular(leaf.normal));
+            leaf.size = leafSize * rng.range(0.75f, 1.2f);
+            leaf.birth = saturate(birthStart + (0.9f - birthStart) * h01 + rng.range(0.0f, 0.1f));
+            leaf.flex = c.flex * (0.5f + 0.7f * h01);
+            leaf.phase = c.phase + rng.range(0.0f, 0.2f);
+            leaf.hue = c.hue + rng.range(-0.2f, 0.2f) + std::max(0.0f, d.y) * 0.25f;
+            leaf.value = c.value * rng.range(0.9f, 1.1f);
+            leaf.ao = lerpf(0.55f, 1.0f, h01);
+            leaf.keep = rng.uniform();
+            leaf.group = group;
+            leaf.mat = mat;
+            leaf.shape = shape;
+            out.leaves.push_back(leaf);
+        }
+    }
+}
+
 int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, float scale, int style, PlantSet& out) {
-    const int group = ++out.bushCount;  // group 0 is reserved for climbers
+    const int group = out.nextGroup++;
+    ++out.bushCount;
     const Vec3 up = normalize(upIn);
     const Frame fr = makeFrame(up, anyPerpendicular(up));
     auto toWorld = [&](const Vec3& l) { return base + fr.side * l.x + fr.normal * l.y + fr.forward * l.z; };
@@ -98,44 +141,8 @@ int growBush(const Params& p, Rng& rng, const Vec3& base, const Vec3& upIn, floa
         }
     }
 
-    // Leaves on the outer surface of the clump union.
-    const float density = p[kParamBushLeafDensity];
-    const float leafSize = p[kParamBushLeafSize];
-    for (size_t ci = firstClump; ci < out.clumps.size(); ++ci) {
-        const Clump c = out.clumps[ci];
-        float r = c.radii.x;
-        int count = int(4 * kPi * r * r * density * 0.8f);
-        for (int k = 0; k < count; ++k) {
-            Vec3 d = rng.unitVector();
-            Vec3 pos = c.center + Vec3{d.x * r, d.y * c.radii.y, d.z * r} * rng.range(0.8f, 1.03f);
-            float height = dot(pos - base, up);
-            if (height < 0.03f) continue;
-            bool buried = false;
-            for (size_t cj = firstClump; cj < out.clumps.size() && !buried; ++cj) {
-                if (cj == ci) continue;
-                const Clump& o = out.clumps[cj];
-                buried = length2(pos - o.center) < (o.radii.x * 0.9f) * (o.radii.x * 0.9f);
-            }
-            if (buried) continue;
-            float h01 = saturate(height / std::max(H, 0.05f));
-            Leaf leaf;
-            leaf.pos = pos;
-            leaf.normal = normalize(d + rng.unitVector() * 0.55f + up * 0.15f, d);
-            leaf.forward = normalize(projectOnPlane(rng.unitVector() + up * 0.3f, leaf.normal), anyPerpendicular(leaf.normal));
-            leaf.size = leafSize * rng.range(0.75f, 1.2f);
-            leaf.birth = saturate(0.35f + 0.55f * h01 + rng.range(0.0f, 0.1f));
-            leaf.flex = c.flex * (0.5f + 0.7f * h01);
-            leaf.phase = c.phase + rng.range(0.0f, 0.2f);
-            leaf.hue = c.hue + rng.range(-0.2f, 0.2f) + std::max(0.0f, d.y) * 0.25f;
-            leaf.value = c.value * rng.range(0.9f, 1.1f);
-            leaf.ao = lerpf(0.55f, 1.0f, h01);
-            leaf.keep = rng.uniform();
-            leaf.group = group;
-            leaf.mat = kMatBushLeaf;
-            leaf.shape = kShapeBush;
-            out.leaves.push_back(leaf);
-        }
-    }
+    coverClumpsWithLeaves(rng, out, firstClump, base, up, 0.0f, H, p[kParamBushLeafSize], p[kParamBushLeafDensity],
+                          kMatBushLeaf, kShapeBush, group, 0.35f);
 
     if (style == kBushFlowering) {
         uint8_t mat = rng.chance(0.6f) ? kMatFlowerWhite : kMatFlowerYellow;

@@ -42,6 +42,12 @@ export const PALETTE = {
   flowerWhite: '#f7f4ea',
   flowerYellow: '#f2c94c',
   flowerCenter: '#e49a36',
+  treeLight: '#a6d25e',
+  tree: '#438f45',
+  treeShadow: '#25544f',
+  barkLight: '#a38d72',
+  bark: '#7d6a56',
+  barkShadow: '#5b5262',
 
   // House
   concreteDark: '#b9ae99',

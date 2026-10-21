@@ -36,6 +36,7 @@ enum PlantsStat {
     PLANTS_STAT_BLADES = 5,
     PLANTS_STAT_CLIMBERS = 6,
     PLANTS_STAT_BUSHES = 7,
+    PLANTS_STAT_TREES = 8,
 };
 
 PLANTS_API PlantsContext* plants_create(void);
@@ -54,10 +55,12 @@ PLANTS_API void plants_reset_params(PlantsContext* ctx);
 PLANTS_API void plants_set_host(PlantsContext* ctx, const float* positions, int vertexCount, const uint32_t* indices,
                                 int indexCount, const uint8_t* tags);
 
-/* Climbers and bushes on the host. Returns the number of leaves. */
+/* Climbers, trees and bushes on the host. Returns the number of leaves. */
 PLANTS_API int plants_grow_on_host(PlantsContext* ctx, uint32_t seed);
 /* A standalone bush at the origin (style: 0 round, 1 tall, 2 spreading, 3 flowering). */
 PLANTS_API int plants_make_bush(PlantsContext* ctx, uint32_t seed, int style, float scale);
+/* A standalone tree at the origin; size scales tree.height (about 0.4 small, 1 medium, 1.8 large). */
+PLANTS_API int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size);
 /* A standalone grass tuft at the origin. */
 PLANTS_API int plants_make_grass(PlantsContext* ctx, uint32_t seed);
 
