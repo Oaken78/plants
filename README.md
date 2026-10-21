@@ -38,6 +38,9 @@ are checked in, so no compiler is needed just to run it.
 | R | Regrow the hero house with a new seed |
 | H | Hide the UI |
 
+On a touch screen, drag with one finger to look and hold two fingers to fly forward. Where pointer lock isn't
+available, dragging with the mouse looks around. The Viewpoints buttons work without a keyboard.
+
 The panel on the right has sliders for growth, wind, sun and render resolution. It also has the full generator
 parameter table, which is read from the core, so you can regrow the hero house with other settings.
 
@@ -64,6 +67,19 @@ To regenerate the house model after editing [tools/make-house.mjs](tools/make-ho
 ```bash
 node tools/make-house.mjs
 ```
+
+### Hosted version
+
+The demo is also published as a private Claude artifact; share it from the page's Share menu. To rebuild the page
+for publishing, run:
+
+```bash
+node tools/make-artifact-page.mjs <out>/index.html
+```
+
+This drops the document wrapper that the host adds itself and loads three.js from jsDelivr instead of
+`node_modules`. Publish `index.html` with `js/*.js`, `build/plants.{js,wasm}` and `assets/house-glb.js` beside it.
+The house loads from `house-glb.js`, a base64 copy of `house.glb`, because the host does not serve `.glb` files.
 
 ## Layout
 

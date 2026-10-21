@@ -186,7 +186,10 @@ async function build() {
   generator = await PlantGenerator.create();
 
   status('Loading house model...');
-  const gltf = await new GLTFLoader().loadAsync('./assets/house.glb');
+  // Embedded as a module (see tools/make-house.mjs) so hosts that refuse .glb files still work.
+  const { HOUSE_GLB_BASE64 } = await import('../assets/house-glb.js');
+  const glb = Uint8Array.from(atob(HOUSE_GLB_BASE64), (c) => c.charCodeAt(0)).buffer;
+  const gltf = await new GLTFLoader().parseAsync(glb, '');
   const lod0 = houseGeometry(gltf.scene.getObjectByName('House_LOD0'));
   const lod1 = houseGeometry(gltf.scene.getObjectByName('House_LOD1'));
   houseGeoms = [lod0.geom, lod1.geom];
@@ -256,6 +259,16 @@ function setupUi(flycam) {
   flycam.onSpeedChange = (s) => { speed.textContent = s.toFixed(1); };
   speed.textContent = flycam.speed.toFixed(1);
 
+  for (const button of document.querySelectorAll('[data-view]')) {
+    button.addEventListener('click', () => goTo(flycam, views[button.dataset.view]));
+  }
+  const toggleUi = () => {
+    const hidden = document.body.classList.toggle('hide-ui');
+    $('ui-toggle').textContent = hidden ? 'Show panels' : 'Hide panels';
+  };
+  $('ui-toggle').addEventListener('click', toggleUi);
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) $('wind').value = '0.25';
+
   const bind = (id, fn) => { const el = $(id); el.addEventListener('input', () => fn(el)); fn(el); };
   bind('grow', (el) => { M.shared.uGrow.value = Number(el.value); });
   bind('wind', (el) => { M.shared.uWind.value.z = Number(el.value); });
@@ -318,7 +331,7 @@ function setupUi(flycam) {
     if (e.code === 'KeyO') $('outlines').click();
     if (e.code === 'KeyG') $('animate').click();
     if (e.code === 'KeyR') $('reseed').click();
-    if (e.code === 'KeyH') document.body.classList.toggle('hide-ui');
+    if (e.code === 'KeyH') toggleUi();
   });
 }
 

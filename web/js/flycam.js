@@ -1,5 +1,6 @@
-// Free-flight camera: click to capture the mouse, WASD to move, Space/E up, Ctrl/Q down,
-// Shift to boost, mouse wheel to change cruise speed.
+// Free-flight camera: click to capture the mouse (or drag to look where pointer lock is not allowed),
+// WASD to move, Space/E up, Ctrl/Q down, Shift to boost, mouse wheel to change cruise speed.
+// Touch: drag with one finger to look, hold two fingers to fly forward.
 import * as THREE from 'three';
 
 export class FlyCam {
@@ -12,16 +13,39 @@ export class FlyCam {
     this.speed = 8;
     this.velocity = new THREE.Vector3();
     this.keys = new Set();
+    this.pointers = new Map();
     this.onSpeedChange = () => {};
 
-    dom.addEventListener('click', () => {
-      if (document.pointerLockElement !== dom) dom.requestPointerLock();
+    const look = (dx, dy) => {
+      this.yaw -= dx * 0.0022;
+      this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch - dy * 0.0022));
+    };
+    dom.addEventListener('pointerdown', (e) => {
+      dom.focus();
+      if (e.pointerType === 'mouse' && document.pointerLockElement !== dom) {
+        // Pointer lock is optional: hosted frames and some browsers refuse it, then dragging looks around.
+        try {
+          dom.requestPointerLock()?.catch?.(() => {});
+        } catch { /* drag to look instead */ }
+      }
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      dom.setPointerCapture?.(e.pointerId);
     });
-    document.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement !== dom) return;
-      this.yaw -= e.movementX * 0.0022;
-      this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch - e.movementY * 0.0022));
+    dom.addEventListener('pointermove', (e) => {
+      if (document.pointerLockElement === dom) {
+        look(e.movementX, e.movementY);
+        return;
+      }
+      const p = this.pointers.get(e.pointerId);
+      if (!p) return;
+      const scale = e.pointerType === 'touch' ? 1.6 : 1;
+      look((e.clientX - p.x) * scale, (e.clientY - p.y) * scale);
+      p.x = e.clientX;
+      p.y = e.clientY;
     });
+    const release = (e) => this.pointers.delete(e.pointerId);
+    dom.addEventListener('pointerup', release);
+    dom.addEventListener('pointercancel', release);
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
       this.keys.add(e.code);
@@ -55,7 +79,7 @@ export class FlyCam {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const wish = new THREE.Vector3();
-    if (k.has('KeyW') || k.has('ArrowUp')) wish.add(forward);
+    if (k.has('KeyW') || k.has('ArrowUp') || this.pointers.size >= 2) wish.add(forward);
     if (k.has('KeyS') || k.has('ArrowDown')) wish.sub(forward);
     if (k.has('KeyD') || k.has('ArrowRight')) wish.add(right);
     if (k.has('KeyA') || k.has('ArrowLeft')) wish.sub(right);
