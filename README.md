@@ -210,8 +210,13 @@ wild flowers on stalks.
 from its plant's clumps, so a bush shades like a few soft lumps and ivy like a padded blanket. The field also gives
 ambient occlusion, which darkens clump interiors. The distant puff LODs sample the same field, so lighting matches
 across LOD transitions. The shaders use two flat tones with a crisp terminator and a warm highlight band; shadows
-fall to blue-tinted palette tones, never grey. A post pass adds depth-based ink lines (silhouettes and convex
-creases), the sky and clouds, and aerial perspective.
+fall to blue-tinted palette tones, never grey. A post pass adds the ink lines, the sky and clouds, and aerial
+perspective. Ink follows the anime convention:
+- **Buildings** get their silhouettes and convex creases.
+- **Foliage** is outlined only around its masses, never leaf by leaf.
+
+To tell the two apart, a cheap depth-only pass renders just the buildings and terrain. Where the scene is nearer than
+that, the pixel is foliage, and only large depth jumps (a crown against what lies well behind it) are inked there.
 
 **Leaf shapes and close-up detail.** A leaf is drawn on a coarse ribbon mesh that carries leaf-space coordinates.
 The fragment shader cuts the true outline from a smooth shape function:
@@ -220,11 +225,8 @@ The fragment shader cuts the true outline from a smooth shape function:
 - oak leaves, rounded at both ends with four broad lobes a side and deep, narrow sinuses;
 - rounded petals.
 
-The edge is anti-aliased with alpha-to-coverage, so outlines stay smooth however close the camera gets, with no
-extra triangles. The same shape cuts the shadow map. Detail is added by distance:
-- **Big enough on screen:** a pixel-wide ink outline.
-- **Bigger still:** a lighter midrib.
-- **Within about 5 m:** a close-up level adds fine veins, palmate on ivy and pinnate on the other leaves.
+The edge is anti-aliased with alpha-to-coverage, so it stays smooth however close the camera gets, with no extra
+triangles. The same shape cuts the shadow map. Leaves carry no ink or veins of their own, which keeps crowns calm.
 
 The shape functions live in `leafHalfWidth()` in both `core/src/mesher.cpp` (which sizes the hulls) and
 `web/js/materials.js` (which cuts the outline); keep them identical.

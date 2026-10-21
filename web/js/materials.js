@@ -30,7 +30,6 @@ export const shared = {
   uWind: { value: new THREE.Vector4(0.8, 0.6, 1.0, 0) },
   uGrow: { value: 1 },
   uLodDebug: { value: 0 },
-  uLeafLines: { value: 1 },
 };
 
 // Foliage palette indexed by the core's material id (core/include/plants/plant_set.h: Material).
@@ -68,7 +67,6 @@ uniform vec3 uCameraPos;
 uniform vec4 uWind;
 uniform float uGrow;
 uniform float uLodDebug;
-uniform float uLeafLines;
 uniform vec3 uLodColor;
 `;
 
@@ -251,28 +249,7 @@ void main() {
     col += lightCol * trans * 0.35;
   }
 
-  // Ink on leaves that are big enough on screen: a pixel-wide outline and a lighter midrib. Within a few metres a
-  // close-up detail level adds veins: palmate on ivy, pinnate on the others.
-  float dist = distance(uCameraPos, vWorldPos);
-  float leafPx = 1.0 / max(fwidth(vLeaf.y), 1e-5);  // leaf length on screen, pixels
-  float near = (1.0 - smoothstep(7.0, 16.0, dist)) * smoothstep(10.0, 22.0, leafPx) * uLeafLines;
-  if (leaf && near > 0.0) {
-    vec2 uv = vLeaf.xy;
-    float outline = 1.0 - smoothstep(0.9, 2.2, edgePx);
-    col = mix(col, col * vec3(0.38, 0.46, 0.52), outline * near * 0.9);
-    bool petal = mat == 4 || mat == 5;
-    float rib = (1.0 - smoothstep(0.5, 1.4, abs(uv.x) / max(fwidth(uv.x), 1e-5))) * step(0.0, uv.y) * step(uv.y, 0.93);
-    vec3 vein = mix(col, lightCol, 0.6);
-    if (!petal) col = mix(col, vein, rib * near * smoothstep(24.0, 48.0, leafPx) * 0.35);
-    float close = (1.0 - smoothstep(2.5, 5.0, dist)) * smoothstep(60.0, 120.0, leafPx) * near;
-    if (!petal && close > 0.0 && edgePx > 2.5) {
-      float vc = mat == 1 ? atan(abs(uv.x), uv.y + 0.05) / 1.5708 * 4.0  // ivy veins fan out from the base
-                          : (uv.y - abs(uv.x) * 1.2) * 7.0;                // the others branch off the midrib
-      float vd = abs(fract(vc + 0.5) - 0.5) / max(fwidth(vc), 1e-5);
-      float veins = (1.0 - smoothstep(0.35, 1.1, vd)) * smoothstep(0.015, 0.04, abs(uv.x));
-      col = mix(col, vein, veins * close * 0.35);
-    }
-  }
+  // No ink on individual leaves: foliage reads as soft masses, outlined only around its silhouette (post pass).
   col = mix(col, uLodColor, uLodDebug * 0.65);
   gl_FragColor = vec4(col, inside);
 }

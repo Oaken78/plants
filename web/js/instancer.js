@@ -15,7 +15,7 @@ const _box = new THREE.Box3();
 const _v = new THREE.Vector3();
 
 class Bucket {
-  constructor(geometry, material, shadowMaterial, lod, layerName) {
+  constructor(geometry, material, shadowMaterial, lod, layerName, hard) {
     this.capacity = 0;
     this.count = 0;
     this.geometry = new THREE.InstancedBufferGeometry();
@@ -29,6 +29,7 @@ class Bucket {
     this.mesh.userData.mainMaterial = material;
     this.mesh.userData.shadowMaterial = shadowMaterial;
     if (shadowMaterial) this.mesh.layers.enable(1);
+    if (hard) this.mesh.layers.enable(2); // buildings: drawn into the hard-depth pass that steers ink lines
     this.lod = lod;
     this.grow(256);
   }
@@ -82,7 +83,8 @@ export class LodLayer {
    * @param {string} o.name
    * @param {number} o.cellSize      metres
    * @param {number} o.maxDistance   instances beyond this are never drawn
-   * @param {Array}  o.variants      [{ parts: [{ lods: [geometry|null...], ranges: [d0, d1, ...], material(lod), shadowMaterial(lod)|null }] }]
+   * @param {Array}  o.variants      [{ parts: [{ lods: [geometry|null...], ranges: [d0, d1, ...], material(lod), shadowMaterial(lod)|null, hard? }] }]
+   *                                 hard: buildings, drawn (with their shadow material) into the hard-depth pass
    * @param {(cx:number, cz:number) => Array<{x,y,z,yaw,scale,variant,radius?}>} o.generateCell
    * @param {number} [o.fade]        cross-fade band as a fraction of the switch distance
    * @param {[number,number]} [o.yRange]  vertical extent used for cell frustum tests
@@ -109,7 +111,7 @@ export class LodLayer {
       for (const part of v.parts) {
         part.buckets = part.lods.map((geom, lod) => {
           if (!geom) return null;
-          const b = new Bucket(geom, part.material(lod), part.shadowMaterial?.(lod) ?? null, lod, this.name);
+          const b = new Bucket(geom, part.material(lod), part.shadowMaterial?.(lod) ?? null, lod, this.name, part.hard);
           this.group.add(b.mesh);
           return b;
         });

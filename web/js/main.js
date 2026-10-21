@@ -53,6 +53,16 @@ function makeMainTarget(w, h) {
   return new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4, depthTexture: depth });
 }
 let mainTarget = makeMainTarget(2, 2);
+// Depth of buildings and terrain only (layer 2). The ink pass compares it with the scene depth to tell foliage from
+// hard surfaces, so leaves get no lines of their own, only the outline of their masses.
+function makeHardTarget(w, h) {
+  const depth = new THREE.DepthTexture(w, h);
+  depth.type = THREE.UnsignedIntType;
+  depth.minFilter = depth.magFilter = THREE.NearestFilter;
+  return new THREE.WebGLRenderTarget(w, h, { format: THREE.RedFormat, depthTexture: depth });
+}
+let hardTarget = makeHardTarget(2, 2);
+const hardCamera = new THREE.PerspectiveCamera();
 
 const shadowDepth = new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE);
 shadowDepth.type = THREE.UnsignedIntType;
@@ -76,6 +86,8 @@ function resize() {
   const pw = Math.floor(w * pixelRatio), ph = Math.floor(h * pixelRatio);
   mainTarget.dispose();
   mainTarget = makeMainTarget(pw, ph);
+  hardTarget.dispose();
+  hardTarget = makeHardTarget(pw, ph);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -185,7 +197,7 @@ function plantPart(lods, ranges, shrink) {
 function buildingVariant(geoms, plantLods, buildingRanges, plantRanges) {
   return {
     parts: [
-      { lods: geoms, ranges: buildingRanges, material: () => M.buildingMaterial(skyColor), shadowMaterial: () => M.buildingShadowMaterial() },
+      { lods: geoms, ranges: buildingRanges, material: () => M.buildingMaterial(skyColor), shadowMaterial: () => M.buildingShadowMaterial(), hard: true },
       plantPart(plantLods, plantRanges),
     ],
   };
@@ -280,9 +292,13 @@ async function build() {
   terrain.userData.mainMaterial = terrain.material;
   terrain.userData.shadowMaterial = M.terrainShadowMaterial();
   terrain.layers.enable(1);
+  terrain.layers.enable(2);
   terrain.frustumCulled = false;
   scene.add(terrain);
   const mountains = new THREE.Mesh(buildMountains(), M.sceneryMaterial(PALETTE.mountain));
+  mountains.userData.mainMaterial = mountains.material;
+  mountains.userData.shadowMaterial = M.terrainShadowMaterial();
+  mountains.layers.enable(2);
   mountains.frustumCulled = false;
   scene.add(mountains);
 }
@@ -292,7 +308,7 @@ async function build() {
 const heroOverrides = {};
 // Viewpoints: heights are metres above the terrain at that spot.
 const views = {
-  Digit1: { pos: [9.5, 2.2, 10.5], target: [1, 2.5, 3] },
+  Digit1: { pos: [3.0, 2.0, 7.6], target: [1.2, 2.6, 3.0] },
   Digit2: { pos: [-15, 1.4, 4], target: [-7, 1.6, 0] },
   Digit3: { pos: [26, 14, 30], target: [-2, 3, 0] },
   Digit4: { pos: [180, 95, 260], target: [0, 0, 0] },
@@ -329,7 +345,6 @@ function setupUi(flycam) {
   bind('sun-az', (el) => { sun.azimuth = Number(el.value); updateSun(); });
   bind('lod-debug', (el) => { M.shared.uLodDebug.value = el.checked ? 1 : 0; for (const l of layers) l.setLodDebug(M.LOD_COLORS); });
   bind('outlines', (el) => { post.material.uniforms.uOutlines.value = el.checked ? 1 : 0; });
-  bind('leaf-lines', (el) => { M.shared.uLeafLines.value = el.checked ? 1 : 0; });
   bind('shadows', (el) => { M.shared.uShadowsOn.value = el.checked ? 1 : 0; });
   $('res').value = String(pixelRatio);
   bind('res', (el) => {
@@ -435,7 +450,23 @@ function frame(flycam) {
   renderer.clear();
   renderer.render(scene, camera);
   const calls = renderer.info.render.calls, tris = renderer.info.render.triangles;
-  post.render(renderer, mainTarget, camera, M.shared.uSunDir.value, now / 1000);
+  // Hard-depth pass: buildings and terrain only, with their depth-only materials.
+  if (post.material.uniforms.uOutlines.value) {
+    hardCamera.copy(camera);
+    hardCamera.layers.set(2);
+    const hard = [];
+    scene.traverse((o) => {
+      if (o.isMesh && o.visible && o.layers.isEnabled(2) && o.userData.shadowMaterial) {
+        hard.push(o);
+        o.material = o.userData.shadowMaterial;
+      }
+    });
+    renderer.setRenderTarget(hardTarget);
+    renderer.clear();
+    renderer.render(scene, hardCamera);
+    for (const o of hard) o.material = o.userData.mainMaterial;
+  }
+  post.render(renderer, mainTarget, hardTarget, camera, M.shared.uSunDir.value, now / 1000);
 
   fpsAvg = fpsAvg * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
   statTimer += dt;

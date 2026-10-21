@@ -65,8 +65,7 @@ keep their names.
   for back faces.
 - **Leaf shapes:** port `leafHalfWidth()` and `leafInside()` from `materials.js`. In `fragment()`, set `ALPHA` from
   the anti-aliased inside test and use `render_mode depth_draw_opaque` with `ALPHA_SCISSOR_THRESHOLD`, or
-  `ALPHA_ANTIALIASING_EDGE` for alpha-to-coverage. The ink outline, midrib and close-up veins follow the web shader.
-  The shadow pass needs the same discard.
+  `ALPHA_ANTIALIASING_EDGE` for alpha-to-coverage. The shadow pass needs the same discard.
 - **LOD dither:** drop it. Godot's visibility-range fade produces the same screen-door cross-fade.
 
 ## 3. LOD and streaming
@@ -94,4 +93,6 @@ of 32 to 64 m keep culling effective. Turn shadow casting off for LOD 3, as the 
 - **Aerial perspective:** `Environment.fog_enabled` with a height falloff gets close. Or keep the custom formula in
   the outline pass.
 - **Ink lines:** a full-screen `MeshInstance3D` quad with a spatial shader that samples `hint_depth_texture`. Use
-  the same silhouette and 1/z-Laplacian crease test, and the same fade with distance.
+  the same silhouette and 1/z-Laplacian crease test, and the same fade with distance. To keep ink off leaves, render
+  the buildings and terrain into a second depth texture (a `SubViewport` with those layers only) and apply the
+  foliage rule from `post.js`: where the scene is nearer than that depth, ink only large depth jumps.

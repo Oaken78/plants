@@ -13,6 +13,7 @@ void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 const FRAG = /* glsl */ `
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
+uniform sampler2D tHardDepth;  // depth of buildings and terrain only
 uniform vec2 uResolution;
 uniform float uNear, uFar;
 uniform mat4 uInvProj;
@@ -89,18 +90,30 @@ void main() {
     float z = linearDepth(raw);
     float dist = z / max(dot(dir, uCamFwd), 0.05);
 
-    // Ink lines from depth: silhouettes (big depth jumps) and creases (1/z is affine on planes,
-    // so its Laplacian is ~0 on flat faces and spikes on convex edges).
+    // Ink lines from depth, anime style: buildings get their silhouettes and convex creases (1/z is affine on
+    // planes, so its Laplacian is ~0 on flat faces and spikes on edges). Foliage only gets the outline of its masses:
+    // a pixel shows foliage when it is nearer than the buildings-and-terrain depth, and there only large depth jumps
+    // (a crown against what lies well behind it) are inked, never the small steps between overlapping leaves.
     if (uOutlines > 0.5) {
       float zl = linearDepth(texture2D(tDepth, vUv - vec2(px.x, 0.0)).r);
       float zr = linearDepth(texture2D(tDepth, vUv + vec2(px.x, 0.0)).r);
       float zd = linearDepth(texture2D(tDepth, vUv - vec2(0.0, px.y)).r);
       float zu = linearDepth(texture2D(tDepth, vUv + vec2(0.0, px.y)).r);
+      float zHard = linearDepth(texture2D(tHardDepth, vUv).r);
+      bool foliage = z < zHard - (0.02 + z * 0.004);
       float far = max(max(zl, zr), max(zd, zu));
-      float sil = smoothstep(0.035, 0.09, (far - z) / z - 0.012 * z / 100.0);
-      float iz = 1.0 / z;
-      float lap = (1.0 / zl + 1.0 / zr + 1.0 / zd + 1.0 / zu - 4.0 * iz) / iz;
-      float crease = smoothstep(0.012, 0.035, -lap);
+      float jump = (far - z) / z - 0.012 * z / 100.0;
+      float sil = foliage ? smoothstep(0.16, 0.3, jump) * step(1.2, far - z) : smoothstep(0.035, 0.09, jump);
+      float crease = 0.0;
+      if (!foliage) {
+        float hl = linearDepth(texture2D(tHardDepth, vUv - vec2(px.x, 0.0)).r);
+        float hr = linearDepth(texture2D(tHardDepth, vUv + vec2(px.x, 0.0)).r);
+        float hd = linearDepth(texture2D(tHardDepth, vUv - vec2(0.0, px.y)).r);
+        float hu = linearDepth(texture2D(tHardDepth, vUv + vec2(0.0, px.y)).r);
+        float iz = 1.0 / zHard;
+        float lap = (1.0 / hl + 1.0 / hr + 1.0 / hd + 1.0 / hu - 4.0 * iz) / iz;
+        crease = smoothstep(0.012, 0.035, -lap);
+      }
       float line = max(sil, crease * 0.8) * mix(1.0, 0.25, smoothstep(60.0, 400.0, dist)) * (1.0 - smoothstep(600.0, 1600.0, dist));
       col = mix(col, col * vec3(0.3, 0.34, 0.45), line * 0.82);
     }
@@ -131,6 +144,7 @@ export class PostPass {
       uniforms: {
         tColor: { value: null },
         tDepth: { value: null },
+        tHardDepth: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uNear: { value: 0.1 },
         uFar: { value: 1000 },
@@ -158,10 +172,12 @@ export class PostPass {
     this.scene.add(quad);
   }
 
-  render(renderer, target, camera, sunDir, time) {
+  // hardTarget holds the depth of buildings and terrain only (see main.js), used to keep ink off leaves.
+  render(renderer, target, hardTarget, camera, sunDir, time) {
     const u = this.material.uniforms;
     u.tColor.value = target.texture;
     u.tDepth.value = target.depthTexture;
+    u.tHardDepth.value = hardTarget.depthTexture;
     u.uResolution.value.set(target.width, target.height);
     u.uLineWidth.value = Math.max(1, target.height / 1100);
     u.uNear.value = camera.near;
