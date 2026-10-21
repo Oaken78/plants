@@ -1,0 +1,14 @@
+{
+  "name": "greatoak-plants",
+  "private": true,
+  "type": "module",
+  "description": "Procedural anime-style plant generator (C++ core -> WebAssembly) and fly-through tech demo",
+  "scripts": {
+    "house": "node tools/make-house.mjs",
+    "serve": "node tools/serve.mjs",
+    "test": "node core/tests/build/tests.cjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}
