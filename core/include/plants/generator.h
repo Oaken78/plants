@@ -72,15 +72,21 @@ enum TreeSpecies { kTreeRound = 0, kTreeOak = 1, kTreeSpeciesCount = 2 };
 // A tree rooted at base. With a host, it leans toward open sky, fits under overhangs, and its roots follow the
 // host's surfaces; roots of a tree less than tree.rootReach above the ground climb down to reach it.
 // size scales tree.height or oak.height (about 0.4 small, 1 medium, 1.8 large). crowding is 0 for a tree standing
-// alone and 1 for one hemmed in by trees or walls: crowded trees grow taller and narrower. Returns the group id.
+// alone and 1 for one hemmed in by trees or walls: crowded trees grow taller and narrower. maxHeight caps the tree
+// (scaling it down whole), for example by the soil it has. Returns the group id.
 int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, int species, float crowding,
-             PlantSet& out);
+             PlantSet& out, float maxHeight = 1e9f);
+
+// Flat area (m^2) at the height of base where soil could collect and that a tree there can reach without crossing a
+// wall: a window sill almost none, a balcony a few square metres, a roof tens. Open ground counts as unlimited.
+float soilArea(const TriangleBvh& bvh, const Vec3& base);
 
 // How hemmed in a tree at base would be (0..1), from nearby walls of the host and the other trunks.
 float estimateCrowding(const TriangleBvh& bvh, const Vec3& base, const std::vector<Vec3>& trunks);
 
 // Trees on the host: on roofs and ledges (preferring spots near an edge) and on the ground patch; tree.oakShare of
-// them are oaks. Each tree's crowding is estimated from the walls and the trees placed before it.
+// them are oaks. Each tree's crowding is estimated from the walls and the trees placed before it. Up on the building
+// a tree needs at least tree.minSoil of soil, and its height is capped at 1 m + tree.soil * sqrt(soil area).
 // Appends each trunk position to trunks.
 void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, PlantSet& out, std::vector<Vec3>& trunks);
 

@@ -160,7 +160,22 @@ Branch thickness follows the pipe model: radius grows with the square root of th
 the trunk flares at its base. Sizes run from about 3 m saplings to 13 m giants (`tree.height` x size).
 
 On a host, trees grow on roofs and ledges, preferring spots near an edge, and on the ground patch away from the
-walls. They lean toward open sky and shrink to fit under overhangs. Their roots crawl over the host's surfaces:
+walls. They lean toward open sky and shrink to fit under overhangs.
+
+A tree can only grow as big as its soil allows. The soil is the flat area at the tree's level that it can reach
+without crossing a wall or parapet. Height is capped at 1 m + `tree.soil` (1.1) x the square root of that area,
+and a spot with less than `tree.minSoil` (1.5 m²) grows no tree at all.
+
+| Spot | Soil | Tallest tree |
+| --- | --- | --- |
+| Window sill or parapet top | almost none | no tree |
+| Balcony | about 2.5 to 4 m² | about 3 m |
+| Stair-hut roof | about 5 m² | about 3.5 m |
+| House roof | about 37 m² | about 8 m |
+| Tower roof | about 90 m² | about 11 m |
+| Ground | unlimited | no cap |
+
+Their roots crawl over the host's surfaces:
 - **Close to the ground** (less than `tree.rootReach`, 8 m by default): roots steer toward the ground. They run
   across the roof, climb over parapets, run down the walls and dig into the soil.
 - **Higher up:** roots only spread over the roof.

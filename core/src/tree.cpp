@@ -82,6 +82,32 @@ Vec3 openSky(const TriangleBvh* host, const Vec3& base, float reach) {
     return sum * 0.25f;
 }
 
+}  // namespace
+
+float soilArea(const TriangleBvh& bvh, const Vec3& base) {
+    const float cell = 0.5f, radius = 7.0f;
+    const Vec3 from = base + kUp * 0.25f;
+    int count = 0;
+    for (float dz = -radius; dz <= radius; dz += cell) {
+        for (float dx = -radius; dx <= radius; dx += cell) {
+            if (dx * dx + dz * dz > radius * radius) continue;
+            const Vec3 q{base.x + dx, base.y, base.z + dz};
+            SurfaceHit h;
+            // Soil spreads, and roots follow it, only where no wall or parapet is in the way.
+            Vec3 d = q + kUp * 0.25f - from;
+            float len = length(d);
+            if (len > 1e-3f && bvh.raycast(from, d / len, len, h, kMaskSolid | kMaskNoGrow)) continue;
+            // A flat surface at about the same height under that spot.
+            if (!bvh.raycast(q + kUp * 0.5f, kDown, 1.0f, h, kMaskSolid | kMaskGround) || h.normal.y < 0.8f) continue;
+            if (h.tag == kTagGround) return 1e9f;
+            ++count;
+        }
+    }
+    return count * cell * cell;
+}
+
+namespace {
+
 struct RootContext {
     const TriangleBvh& bvh;
     Rng& rng;
@@ -331,21 +357,24 @@ TreeShape shapeFor(const Params& p, Rng& rng, int species, float size, float cro
 }  // namespace
 
 int growTree(const Params& p, Rng& rng, const TriangleBvh* host, const Vec3& base, float size, int species, float crowding,
-             PlantSet& out) {
+             PlantSet& out, float maxHeight) {
     const int group = out.nextGroup++;
     ++out.treeCount;
     TreeShape s = shapeFor(p, rng, species, size, crowding);
+    // Cap the height (soil) and fit under overhangs, scaling the whole tree so it keeps its proportions.
+    float limit = maxHeight;
     if (host) {
-        // Fit under overhangs, keeping the proportions.
         SurfaceHit h;
-        if (host->raycast(base + kUp * 0.3f, kUp, s.H * 1.15f, h, kMaskSolid | kMaskNoGrow)) {
-            float k = std::max(1.2f, (h.distance + 0.3f) * 0.85f) / s.H;
-            s.H *= k;
-            s.R *= k;
-            s.Rv *= k;
-            s.forkH *= k;
-            s.trunkR = std::max(0.03f, s.trunkR * k);
-        }
+        if (host->raycast(base + kUp * 0.3f, kUp, s.H * 1.15f, h, kMaskSolid | kMaskNoGrow))
+            limit = std::min(limit, std::max(1.2f, (h.distance + 0.3f) * 0.85f));
+    }
+    if (s.H > limit) {
+        float k = limit / s.H;
+        s.H *= k;
+        s.R *= k;
+        s.Rv *= k;
+        s.forkH *= k;
+        s.trunkR = std::max(0.03f, s.trunkR * k);
     }
     const float H = s.H, R = s.R, Rv = s.Rv, forkH = s.forkH, trunkR = s.trunkR;
     const float sizeFactor = H / 7.0f;
@@ -560,12 +589,15 @@ void scatterTreesOnHost(const TriangleBvh& bvh, const Params& p, Rng& rng, Plant
         }
         if (!nearEdge && !rng.chance(0.2f)) continue;
         if (!spaced(s.point, 3.5f) || isEnclosed(bvh, s.point)) continue;
-        // Oaks are rarer up here and start smaller (they are much bigger trees).
+        // How big a tree this spot can feed: nothing on a window sill, a small tree on a balcony, more on a roof.
+        float soil = soilArea(bvh, s.point);
+        if (soil < p[kParamTreeMinSoil]) continue;
+        float maxHeight = 1.0f + p[kParamTreeSoil] * std::sqrt(soil);
         bool oak = rng.chance(oakShare * 0.5f);
-        float size = oak ? rng.range(0.3f, 0.5f) : rng.range(0.35f, 0.75f);
+        float size = oak ? rng.range(0.3f, 0.8f) : rng.range(0.4f, 1.1f);
         float crowding = estimateCrowding(bvh, s.point, trunks);
         Rng treeRng = rng.fork(uint32_t(7000 + placed));
-        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, size, oak ? kTreeOak : kTreeRound, crowding, out);
+        growTree(p, treeRng, &bvh, s.point - kUp * 0.02f, size, oak ? kTreeOak : kTreeRound, crowding, out, maxHeight);
         trunks.push_back(s.point);
         ++placed;
     }

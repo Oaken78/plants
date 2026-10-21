@@ -31,9 +31,10 @@ struct TestHost {
         tags.push_back(tag);
         tags.push_back(tag);
     }
-    explicit TestHost(float y = 3) {
+    // A box of height y and half-width half standing on a 16 x 16 m ground patch.
+    explicit TestHost(float y = 3, float half = 2) {
         quad({-8, 0, 8}, {8, 0, 8}, {8, 0, -8}, {-8, 0, -8}, kTagGround);
-        float x = 2, z = 2;
+        float x = half, z = half;
         quad({-x, 0, z}, {x, 0, z}, {x, y, z}, {-x, y, z}, kTagSolid);      // +z
         quad({x, 0, -z}, {-x, 0, -z}, {-x, y, -z}, {x, y, -z}, kTagSolid);  // -z
         quad({x, 0, z}, {x, 0, -z}, {x, y, -z}, {x, y, z}, kTagSolid);      // +x
@@ -266,12 +267,38 @@ static void testNothingInside() {
     plants_destroy(ctx);
 }
 
+// Soil: a pillar top (like a window sill) grows no tree, a small roof a small one, a big roof a bigger one.
+static void testSoil() {
+    PlantsContext* ctx = plants_create();
+    for (const char* name : {"climber.seeds", "climber.roofSeeds", "bush.count", "tree.groundCount", "tree.oakShare"})
+        plants_set_param(ctx, paramId(name), 0);
+    plants_set_param(ctx, paramId("tree.count"), 1);
+    plants_set_param(ctx, paramId("tree.height"), 14);  // ask for big trees; the soil decides
+    float heights[3] = {};
+    int trees[3] = {};
+    const float halves[3] = {0.15f, 0.8f, 4.0f};
+    for (int k = 0; k < 3; ++k) {
+        TestHost host(3.0f, halves[k]);
+        plants_set_host(ctx, host.pos.data(), int(host.pos.size() / 3), host.idx.data(), int(host.idx.size()), host.tags.data());
+        plants_grow_on_host(ctx, 9);
+        trees[k] = plants_stat(ctx, PLANTS_STAT_TREES);
+        heights[k] = trees[k] ? plants_mesh_bounds(ctx, 0)[4] - 3.0f : 0.0f;
+        std::printf("roof %.1f x %.1f m: %d tree(s), %.1f m tall\n", halves[k] * 2, halves[k] * 2, trees[k], heights[k]);
+    }
+    CHECK(trees[0] == 0);                                // sill-sized: no soil, no tree
+    CHECK(trees[1] == 1 && trees[2] == 1);
+    CHECK(heights[1] < 1.0f + 1.1f * 1.6f + 0.6f);        // ~2.6 m^2 of soil: a small tree
+    CHECK(heights[2] > heights[1] * 1.8f);               // a big roof feeds a much bigger one
+    plants_destroy(ctx);
+}
+
 int main() {
     testBvh();
     testGrowth();
     testStandalone();
     testTrees();
     testNothingInside();
+    testSoil();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

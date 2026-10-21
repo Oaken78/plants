@@ -45,6 +45,8 @@ namespace plants {
     X(TreeRootReach, "tree.rootReach", 8.0f, 0, 30)               \
     X(TreeRootBranching, "tree.rootBranching", 0.7f, 0, 2)        \
     X(TreeMaxLeaves, "tree.maxLeaves", 22000, 2000, 80000)        \
+    X(TreeSoil, "tree.soil", 1.1f, 0.2f, 4)                       \
+    X(TreeMinSoil, "tree.minSoil", 1.5f, 0, 20)                   \
     X(TreeOakShare, "tree.oakShare", 0.35f, 0, 1)                 \
     X(OakHeight, "oak.height", 15.0f, 4, 30)                      \
     X(OakTrunk, "oak.trunk", 0.05f, 0.02f, 0.1f)                  \
