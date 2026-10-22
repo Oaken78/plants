@@ -107,7 +107,7 @@ public:
     void configure_variants(int bushes, int grass, int round_trees, int oak_sizes, int oak_forms);
     float terrain_height(float x, float z) const;
     Array get_cell(int kind, int cx, int cz, float cell_size) const;
-    Ref<ArrayMesh> build_terrain_mesh(int resolution) const;
+    Array build_terrain_chunks(int resolution, int chunks) const;
     Ref<ArrayMesh> build_mountain_mesh() const;
 
 protected:

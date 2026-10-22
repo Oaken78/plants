@@ -69,10 +69,14 @@ void PlantLayer::set_variant(int index, const Array& parts) {
         part.buckets.resize(ranges.size());
         part.far.resize(ranges.size());
         part.proxy.resize(ranges.size());
-        auto make = [&](Bucket& b, int lod, int mesh_lod, RenderingServer::ShadowCastingSetting shadows) {
+        part.caster.assign(ranges.size(), -1);
+        part.tile_proto.resize(ranges.size());
+        part.material = material;
+        // Fills in a bucket for a LOD drawn with the mesh of mesh_lod; without shadows set, it is only a template.
+        auto prepare = [&](Bucket& b, int lod, int mesh_lod) {
             b.lod = lod;
             b.mesh = lods[mesh_lod];
-            if (b.mesh.is_null()) return;
+            if (b.mesh.is_null()) return false;
             const AABB box = b.mesh->get_aabb();
             b.local_center = box.get_center();
             b.local_radius = box.size.length() * 0.5f + kWindMargin;
@@ -80,19 +84,21 @@ void PlantLayer::set_variant(int index, const Array& parts) {
             if (am.is_valid())
                 for (int s = 0; s < am->get_surface_count(); ++s) b.triangles += am->surface_get_array_index_len(s) / 3;
             b.live = true;
-            b.multimesh = rs->multimesh_create();
-            rs->multimesh_set_mesh(b.multimesh, b.mesh->get_rid());
-            b.instance = rs->instance_create();
-            rs->instance_set_base(b.instance, b.multimesh);
-            if (scenario_.is_valid()) rs->instance_set_scenario(b.instance, scenario_);
-            if (material.is_valid()) rs->instance_geometry_set_material_override(b.instance, material->get_rid());
-            rs->instance_geometry_set_cast_shadows_setting(b.instance, shadows);
-            rs->instance_set_visible(b.instance, false);
+            return true;
         };
         using SC = RenderingServer::ShadowCastingSetting;
+        auto make = [&](Bucket& b, int lod, int mesh_lod, SC shadows) {
+            if (prepare(b, lod, mesh_lod)) create(b, material, shadows);
+        };
         for (int lod = 0; lod < int(ranges.size()); ++lod) {
             int caster = lod < shadow_lods.size() ? shadow_lods[lod] : -1;
             if (caster >= lods.size() || (caster >= 0 && Ref<Mesh>(lods[caster]).is_null())) caster = -1;
+            part.caster[lod] = caster;
+            if (shadow_tiles_) {
+                make(part.buckets[lod], lod, lod, SC::SHADOW_CASTING_SETTING_OFF);
+                if (caster >= 0) prepare(part.tile_proto[lod], lod, caster);
+                continue;
+            }
             const bool casts = caster == lod;
             make(part.buckets[lod], lod, lod, casts ? SC::SHADOW_CASTING_SETTING_ON : SC::SHADOW_CASTING_SETTING_OFF);
             if (casts) make(part.far[lod], lod, lod, SC::SHADOW_CASTING_SETTING_OFF);
@@ -102,17 +108,42 @@ void PlantLayer::set_variant(int index, const Array& parts) {
     }
 }
 
+void PlantLayer::create(Bucket& b, const Ref<Material>& material, RenderingServer::ShadowCastingSetting shadows) {
+    RenderingServer* rs = RenderingServer::get_singleton();
+    b.multimesh = rs->multimesh_create();
+    rs->multimesh_set_mesh(b.multimesh, b.mesh->get_rid());
+    b.instance = rs->instance_create();
+    rs->instance_set_base(b.instance, b.multimesh);
+    if (scenario_.is_valid()) rs->instance_set_scenario(b.instance, scenario_);
+    if (material.is_valid()) rs->instance_geometry_set_material_override(b.instance, material->get_rid());
+    rs->instance_geometry_set_cast_shadows_setting(b.instance, shadows);
+    rs->instance_set_visible(b.instance, false);
+    b.created = true;
+}
+
 void PlantLayer::free_variant(PlantVariant& v) {
     RenderingServer* rs = RenderingServer::get_singleton();
+    auto free_bucket = [rs](Bucket& b) {
+        if (!b.created) return;
+        rs->free_rid(b.instance);
+        rs->free_rid(b.multimesh);
+    };
     for (Part& p : v.parts) {
-        for (std::vector<Bucket>* list : {&p.buckets, &p.far, &p.proxy}) {
-            for (Bucket& b : *list) {
-                if (b.instance.is_valid()) rs->free_rid(b.instance);
-                if (b.multimesh.is_valid()) rs->free_rid(b.multimesh);
-            }
-        }
+        for (std::vector<Bucket>* list : {&p.buckets, &p.far, &p.proxy})
+            for (Bucket& b : *list) free_bucket(b);
+        for (auto& t : p.tiles) free_bucket(t.second);
     }
     v.parts.clear();
+}
+
+PlantLayer::Bucket& PlantLayer::tile(Part& part, int lod, const overgrowth::Instance& inst, float distance) {
+    const int cls = distance < 64.0f ? 0 : (distance < 160.0f ? 1 : 2);
+    const float size = shadow_tile_ * float(1 << cls);
+    const int64_t tx = int64_t(std::floor(inst.x / size)), tz = int64_t(std::floor(inst.z / size));
+    const int64_t key = (int64_t(lod) << 56) | (int64_t(cls) << 52) | ((tx & 0x3FFFFFF) << 26) | (tz & 0x3FFFFFF);
+    auto it = part.tiles.find(key);
+    if (it != part.tiles.end()) return it->second;
+    return part.tiles.emplace(key, part.tile_proto[lod]).first->second;
 }
 
 void PlantLayer::clear_variants() {
@@ -178,7 +209,7 @@ void PlantLayer::push(Bucket& b, const overgrowth::Instance& inst, float fade_co
 }
 
 void PlantLayer::commit(Bucket& b) {
-    if (!b.live) return;
+    if (!b.created) return;
     RenderingServer* rs = RenderingServer::get_singleton();
     const bool shown = b.count > 0 && is_visible_in_tree();
     if (shown != b.shown) {
@@ -327,6 +358,11 @@ void PlantLayer::walk(const View& view) {
                             const float t = (d - (ranges[lod] - band)) / band;
                             const bool near = d <= shadow_distance;
                             auto put = [&](int l, float code) {
+                                if (shadow_tiles_) {
+                                    push(part.buckets[l], inst, code);
+                                    if (near && part.caster[l] >= 0) push(tile(part, l, inst, d), inst, code);
+                                    return;
+                                }
                                 push((!near && part.far[l].live) ? part.far[l] : part.buckets[l], inst, code);
                                 if (near) push(part.proxy[l], inst, code);
                             };
@@ -347,6 +383,27 @@ void PlantLayer::walk(const View& view) {
 
 void PlantLayer::finish() {
     const auto t0 = std::chrono::steady_clock::now();
+    // Shadow tiles get their multimesh on first use, and give it back after some seconds unused.
+    RenderingServer* rs = RenderingServer::get_singleton();
+    for (PlantVariant& v : variants_) {
+        for (Part& p : v.parts) {
+            for (auto it = p.tiles.begin(); it != p.tiles.end();) {
+                Bucket& b = it->second;
+                if (b.count > 0) {
+                    b.idle_frames = 0;
+                    if (!b.created) create(b, p.material, RenderingServer::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+                } else if (++b.idle_frames > 240) {
+                    if (b.created) {
+                        rs->free_rid(b.instance);
+                        rs->free_rid(b.multimesh);
+                    }
+                    it = p.tiles.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+        }
+    }
     for_each_bucket([this](Bucket& b) { commit(b); });
     stats_.upload_usec = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
     stats_.usec = stats_.walk_usec + stats_.upload_usec;
@@ -356,7 +413,7 @@ void PlantLayer::apply_visibility() {
     RenderingServer* rs = RenderingServer::get_singleton();
     const bool shown = is_visible_in_tree();
     for_each_bucket([&](Bucket& b) {
-        if (b.instance.is_valid()) {
+        if (b.created) {
             b.shown = shown && b.count > 0;
             rs->instance_set_visible(b.instance, b.shown);
         }
@@ -386,13 +443,13 @@ void PlantLayer::_notification(int what) {
         case NOTIFICATION_ENTER_WORLD: {
             scenario_ = get_world_3d()->get_scenario();
             for_each_bucket([&](Bucket& b) {
-                if (b.instance.is_valid()) rs->instance_set_scenario(b.instance, scenario_);
+                if (b.created) rs->instance_set_scenario(b.instance, scenario_);
             });
         } break;
         case NOTIFICATION_EXIT_WORLD: {
             scenario_ = RID();
             for_each_bucket([&](Bucket& b) {
-                if (b.instance.is_valid()) rs->instance_set_scenario(b.instance, RID());
+                if (b.created) rs->instance_set_scenario(b.instance, RID());
             });
         } break;
         case NOTIFICATION_VISIBILITY_CHANGED: apply_visibility(); break;
@@ -403,6 +460,7 @@ void PlantLayer::_notification(int what) {
 void PlantLayer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("configure", "world", "kind", "cell_size", "max_distance", "y_min", "y_max", "fade"),
                          &PlantLayer::configure, DEFVAL(0.12f));
+    ClassDB::bind_method(D_METHOD("set_shadow_tiles", "tile"), &PlantLayer::set_shadow_tiles);
     ClassDB::bind_method(D_METHOD("set_variant", "index", "parts"), &PlantLayer::set_variant);
     ClassDB::bind_method(D_METHOD("clear_variants"), &PlantLayer::clear_variants);
     ClassDB::bind_method(D_METHOD("update", "camera", "sun_direction", "shadow_distance"), &PlantLayer::update);

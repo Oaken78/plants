@@ -15,6 +15,9 @@ extends Node3D
 ##   --stats                print the triangle count of every mesh variant and LOD
 ##   --serial               grow the plant sets one after another on the main thread (to time the parallel growth)
 ##   --full-shadows         every LOD casts its own shadow instead of a coarser proxy (to compare)
+##   --shadow-tiles=M       size of the nearest shadow tiles in metres, 0 for one shadow bucket per LOD (default 32)
+##   --terrain-chunks=N     terrain chunks per side, 1 for a single mesh (default 12)
+##   --wind=S               wind strength (default 1)
 ##   --debug-lod, --no-outlines, --no-shadows, --grow=T, --msaa=N, --sun=elevation,azimuth
 ##   --shadow-bias=B, --normal-bias=B, --shadow-blur=B   sun shadow tuning
 
@@ -314,6 +317,7 @@ func _layer(name: String, kind: int, cell: float, max_distance: float, y_min: fl
 	var l := PlantLayer.new()
 	l.name = name
 	l.configure(world, kind, cell, max_distance, y_min, y_max, fade)
+	l.set_shadow_tiles(float(_args.get("shadow-tiles", 32)))
 	add_child(l)
 	layers.append(l)
 	return l
@@ -324,11 +328,14 @@ func _build_scenery() -> void:
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
 	for key in ["grass_light", "grass", "grass_shade", "dirt"]:
 		terrain_mat.set_shader_parameter(key, Palette.color("grass_shadow" if key == "grass_shade" else key))
-	var terrain := MeshInstance3D.new()
+	var terrain := Node3D.new()
 	terrain.name = "Terrain"
-	terrain.mesh = world.build_terrain_mesh(420)
-	terrain.material_override = terrain_mat
 	add_child(terrain)
+	for mesh in world.build_terrain_chunks(420, int(_args.get("terrain-chunks", 12))):
+		var chunk := MeshInstance3D.new()
+		chunk.mesh = mesh
+		chunk.material_override = terrain_mat
+		terrain.add_child(chunk)
 
 	var mountain_mat := ShaderMaterial.new()
 	mountain_mat.shader = load("res://shaders/scenery.gdshader")
@@ -446,11 +453,15 @@ func _apply_args() -> void:
 	if _args.has("shadow-blur"):
 		sun.shadow_blur = float(_args["shadow-blur"])
 	if _args.has("terrain-shadows"):
-		$Terrain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _args["terrain-shadows"] == "on" else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for chunk in $Terrain.get_children():
+			chunk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _args["terrain-shadows"] == "on" else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if _args.has("splits"):
-		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if _args.splits == "2" else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		var modes := {"1": DirectionalLight3D.SHADOW_ORTHOGONAL, "2": DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS}
+		sun.directional_shadow_mode = modes.get(str(_args.splits), DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS)
 	if _args.has("shadow-distance"):
 		sun.directional_shadow_max_distance = float(_args["shadow-distance"])
+	if _args.has("wind"):
+		wind_strength = float(_args.wind)
 	if _args.has("grow"):
 		growth = float(_args.grow)
 	set_lod_debug(_args.has("debug-lod"))

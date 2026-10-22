@@ -40,10 +40,11 @@ Pass these after `--`, for example `godot --path godot -- --view=8 --shot=oak.pn
 | `--serial` | Grow the plant sets one after another on the main thread, to time the parallel growth |
 | `--regrow=SEED` | Regrow the hero house once running, to test the background regrow |
 | `--leaves=scissor` | Hard alpha-tested leaf edges instead of alpha to coverage |
-| `--full-shadows` | LOD 0 casts its own shadow instead of the LOD 1 proxy |
+| `--full-shadows` | Every LOD casts its own shadow instead of a coarser proxy |
+| `--shadow-tiles=M`, `--terrain-chunks=N` | Size of the nearest shadow tiles (default 32 m; 0 turns them off) and terrain chunks per side (default 12; 1 for one mesh) |
 | `--hide=houses,trees,bushes,grass,terrain,mountains` | Hide layers, for profiling |
-| `--debug-lod`, `--no-outlines`, `--no-shadows`, `--grow=T`, `--msaa=N`, `--sun=elevation,azimuth` | Settings |
-| `--shadow-bias=B`, `--normal-bias=B`, `--shadow-blur=B`, `--splits=2\|4`, `--shadow-distance=M`, `--terrain-shadows=on\|off` | Sun shadow tuning |
+| `--debug-lod`, `--no-outlines`, `--no-shadows`, `--grow=T`, `--wind=S`, `--msaa=N`, `--sun=elevation,azimuth` | Settings |
+| `--shadow-bias=B`, `--normal-bias=B`, `--shadow-blur=B`, `--splits=1\|2\|4`, `--shadow-distance=M`, `--terrain-shadows=on\|off` | Sun shadow tuning |
 
 ## Build the extension
 
@@ -108,11 +109,10 @@ the same plant for the same seed. The exception is plants grown on a host (see D
 
 **A native instancer.** `PlantLayer` does what `instancer.js` does, in C++. It walks cells in blocks of 8x8 and
 culls whole blocks before touching a cell. `PlantLayer.update_layers()` walks the four layers at once on the
-`WorkerThreadPool`; only the uploads, one buffer per multimesh, run on the main thread. A frame costs about 1 ms
-of main-thread time for some 8,000 instances and 10,000 bucket entries: each walk takes about 0.3 ms on its
-worker, and the uploads take 0.4 ms in total. The walk is limited by cache misses, not arithmetic: the same work
-in a warm loop takes a third of the time. Each bucket gets tight bounds, so Godot can skip it for shadow cascades
-it cannot reach.
+`WorkerThreadPool`; only the uploads, one buffer per multimesh, run on the main thread. A frame costs 1 to 1.8 ms
+of main-thread time for some 8,000 instances: each walk takes about 0.3 ms on its worker, and the rest is uploads
+to some 400 to 650 multimeshes, most of them shadow tiles (below). The walk is limited by cache misses, not
+arithmetic: the same work in a warm loop takes a third of the time.
 
 **Ink without a second geometry pass.** To keep ink off leaves, the web demo renders the buildings and terrain a
 second time into a depth target. In Godot every material writes a surface tag into `ROUGHNESS`. Nothing else reads
@@ -126,10 +126,21 @@ the depth prepass and the shadow maps, so only the anti-aliased rim is drawn tra
 over hard alpha-scissor edges (`--leaves=scissor`).
 
 **Shadows to 400 m.** The web demo has one 4096 shadow map, 170 m across, that follows the camera. Godot uses four
-cascades out to 400 m, so trees and towers in the middle distance cast shadows too. Two things keep this
-affordable:
-- **Near/far buckets.** A shadow-casting bucket is split into a near copy that casts and a far copy beyond the shadow
-  distance that does not, so the distant town is not drawn into every cascade.
+cascades out to 400 m, so trees and towers in the middle distance cast shadows too. Godot culls casters per cascade
+by their bounds, against the light-space box around that cascade's slice of the view. A bucket holding every
+caster of one LOD spans hundreds of metres and reaches into nearly every cascade: with four cascades the ground
+viewpoints drew 3.5 times the shadow triangles of one. Three things keep this affordable. The first two leave the
+image unchanged: screenshots with and without them differ by at most 3/255, from drifting clouds.
+- **Shadow tiles.** Casters go into shadows-only multimeshes per LOD and world tile: 32 m tiles within 64 m of the
+  camera, 64 m to 160 m, 128 m beyond, much as the cascades grow. Each tile reaches only the cascades that cover
+  it. This removes 20 to 55% of the shadow triangles and up to 1.1 ms of GPU time, for about 0.5 ms more
+  instancing on the CPU and twice the shadow draw calls. Tiles are made on first use and freed after some seconds
+  unused. Without tiles (`--shadow-tiles=0`), a shadow-casting bucket is instead split into a near copy that casts
+  and a far copy beyond the shadow distance that does not.
+- **Terrain chunks.** The terrain is 144 meshes instead of one, so Godot culls it per chunk, for the view and for
+  each cascade. As one mesh, all 353 k triangles reaching 3 km went into every cascade. The grid is warped, so the
+  chunks are small near the centre and large at the rim; normals come from the whole grid, so the seams do not
+  show. This removes 1.3 M shadow triangles and 0.35 to 0.6 ms of GPU time.
 - **Shadow proxies.** A LOD can cast its shadow with a coarser mesh, through a shadows-only multimesh of the same
   instances. LOD 0 casts with the LOD 1 mesh, which has a third of the leaves, enlarged to the same coverage. On
   houses and towers, LOD 2 (55 k to 127 k triangles of puffs and silhouette leaves) casts with LOD 3. Leaves shade
@@ -157,18 +168,18 @@ GPU time per viewpoint (`--view=N --bench=6`), with triangles per frame in the m
 
 | Viewpoint | GPU | Main pass | Shadow passes |
 | --- | ---: | ---: | ---: |
-| 1 Ivy close-up | 15.8 ms | 6.4 M | 6.9 M |
-| 2 Annex | 17.2 ms | 6.4 M | 6.3 M |
-| 3 Hero house | 11.9 ms | 4.2 M | 5.0 M |
-| 4 Aerial | 8.8 ms | 3.4 M | 1.9 M |
-| 5 Village | 16.3 ms | 6.5 M | 7.1 M |
-| 6 Village above | 11.8 ms | 5.6 M | 3.8 M |
-| 7 Towers | 14.5 ms | 6.0 M | 6.2 M |
-| 8 Lone oak | 14.1 ms | 6.3 M | 5.5 M |
+| 1 Ivy close-up | 14.8 ms | 6.2 M | 4.0 M |
+| 2 Annex | 16.3 ms | 6.2 M | 4.0 M |
+| 3 Hero house | 10.9 ms | 4.0 M | 2.4 M |
+| 4 Aerial | 8.2 ms | 3.2 M | 0.4 M |
+| 5 Village | 14.7 ms | 6.2 M | 3.2 M |
+| 6 Village above | 11.2 ms | 5.4 M | 1.7 M |
+| 7 Towers | 13.5 ms | 5.8 M | 3.7 M |
+| 8 Lone oak | 13.2 ms | 6.0 M | 3.3 M |
 
-At the hero viewpoint, shadows cost about 4 ms and MSAA about 2.5 ms. Before the far LOD and the shadow changes,
-the first straight port took 14.6 ms there; before the shadow proxies, the ivy close-up, the village and the lone
-oak took 20.2, 21.2 and 18.8 ms.
+At the hero viewpoint, MSAA costs about 2.5 ms. Before the far LOD and the shadow changes, the first straight port
+took 14.6 ms there; before the shadow proxies, the ivy close-up, the village and the lone oak took 20.2, 21.2 and
+18.8 ms; before the shadow tiles and terrain chunks, 15.8, 16.3 and 14.1 ms.
 
 ## Differences from the web demo
 

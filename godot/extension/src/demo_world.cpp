@@ -249,7 +249,7 @@ namespace {
 // Vertex normals as three.js computeVertexNormals makes them: area-weighted face normals, summed and normalised.
 // Triangles are wound clockwise (Godot's front face) where three.js winds them counter-clockwise; with the
 // operands in this order the face normal still points out of the front.
-Ref<ArrayMesh> make_mesh(const PackedVector3Array& pos, const PackedInt32Array& idx) {
+PackedVector3Array vertex_normals(const PackedVector3Array& pos, const PackedInt32Array& idx) {
     PackedVector3Array nrm;
     nrm.resize(pos.size());
     Vector3* n = nrm.ptrw();
@@ -262,6 +262,10 @@ Ref<ArrayMesh> make_mesh(const PackedVector3Array& pos, const PackedInt32Array& 
         n[t[i + 2]] += face;
     }
     for (int64_t i = 0; i < nrm.size(); ++i) n[i] = n[i].normalized();
+    return nrm;
+}
+
+Ref<ArrayMesh> make_mesh(const PackedVector3Array& pos, const PackedVector3Array& nrm, const PackedInt32Array& idx) {
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
     arrays[Mesh::ARRAY_VERTEX] = pos;
@@ -300,8 +304,11 @@ Array DemoWorld::get_cell(int kind, int cx, int cz, float cell_size) const {
     return out;
 }
 
-// Terrain grid with spacing ~1.3 m at the centre growing to ~40 m at the rim.
-Ref<ArrayMesh> DemoWorld::build_terrain_mesh(int n) const {
+// Terrain grid with spacing ~1.3 m at the centre growing to ~40 m at the rim, cut into chunks x chunks meshes. As one
+// mesh it would be drawn whole into every shadow cascade and behind the camera; as chunks Godot culls each one, and
+// since the grid is warped the chunks are small near the centre and large at the rim. Normals come from the whole
+// grid, so the seams do not show.
+Array DemoWorld::build_terrain_chunks(int n, int chunks) const {
     const double e = overgrowth::World::kExtent;
     auto warp = [e](double u) { return e * (0.08 * u + 0.92 * u * u * u); };
     const int verts = n + 1;
@@ -325,7 +332,30 @@ Ref<ArrayMesh> DemoWorld::build_terrain_mesh(int n) const {
             t[k + 3] = b; t[k + 4] = d; t[k + 5] = c;
         }
     }
-    return make_mesh(pos, idx);
+    const PackedVector3Array nrm = vertex_normals(pos, idx);
+    Array out;
+    for (int cj = 0; cj < chunks; ++cj) {
+        for (int ci = 0; ci < chunks; ++ci) {
+            const int i0 = ci * n / chunks, i1 = (ci + 1) * n / chunks;
+            const int j0 = cj * n / chunks, j1 = (cj + 1) * n / chunks;
+            const int w = i1 - i0 + 1;
+            PackedVector3Array cp, cn;
+            PackedInt32Array ct;
+            for (int j = j0; j <= j1; ++j)
+                for (int i = i0; i <= i1; ++i) {
+                    cp.push_back(pos[j * verts + i]);
+                    cn.push_back(nrm[j * verts + i]);
+                }
+            for (int j = 0; j < j1 - j0; ++j)
+                for (int i = 0; i < i1 - i0; ++i) {
+                    const int a = j * w + i, b = a + 1, c = a + w, d = c + 1;
+                    const int tri[6] = {a, b, c, b, d, c};
+                    for (int v : tri) ct.push_back(v);
+                }
+            out.push_back(make_mesh(cp, cn, ct));
+        }
+    }
+    return out;
 }
 
 // A ring of distant blue mountains beyond the terrain.
@@ -356,7 +386,7 @@ Ref<ArrayMesh> DemoWorld::build_mountain_mesh() const {
             for (int v : tri) idx.push_back(v);
         }
     }
-    return make_mesh(pos, idx);
+    return make_mesh(pos, vertex_normals(pos, idx), idx);
 }
 
 void DemoWorld::_bind_methods() {
@@ -364,7 +394,8 @@ void DemoWorld::_bind_methods() {
                          &DemoWorld::configure_variants);
     ClassDB::bind_method(D_METHOD("terrain_height", "x", "z"), &DemoWorld::terrain_height);
     ClassDB::bind_method(D_METHOD("get_cell", "kind", "cx", "cz", "cell_size"), &DemoWorld::get_cell);
-    ClassDB::bind_method(D_METHOD("build_terrain_mesh", "resolution"), &DemoWorld::build_terrain_mesh, DEFVAL(420));
+    ClassDB::bind_method(D_METHOD("build_terrain_chunks", "resolution", "chunks"), &DemoWorld::build_terrain_chunks,
+                         DEFVAL(420), DEFVAL(12));
     ClassDB::bind_method(D_METHOD("build_mountain_mesh"), &DemoWorld::build_mountain_mesh);
 }
 

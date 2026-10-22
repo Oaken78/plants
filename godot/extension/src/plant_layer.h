@@ -23,6 +23,7 @@
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/node3d.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 
 #include "demo_world.h"
 
@@ -36,6 +37,10 @@ public:
 
     void configure(const Ref<DemoWorld>& world, int kind, float cell_size, float max_distance, float y_min, float y_max,
                    float fade);
+    // Shadow tiles (set before set_variant): casters go into shadows-only multimeshes per world tile, so Godot can
+    // leave each tile out of the shadow cascades it cannot reach. See Part::tiles.
+    // tile: size of the nearest tiles in metres (they double at 64 m and at 160 m); 0 turns shadow tiles off.
+    void set_shadow_tiles(float tile) { shadow_tile_ = tile; shadow_tiles_ = tile > 0; }
     void set_variant(int index, const Array& parts);
     void clear_variants();
     void update(Camera3D* camera, const Vector3& sun_direction, float shadow_distance);
@@ -54,6 +59,8 @@ private:
         // Whether this bucket draws anything. RID::is_valid() is a call into the engine, too slow for the per-instance
         // loop, so update() reads this instead.
         bool live = false;
+        bool created = false;   // RenderingServer objects exist (shadow tiles create them on first use)
+        int idle_frames = 0;    // frames a shadow tile has been empty; it is freed after a while
         Ref<Mesh> mesh;
         int lod = 0;
         int capacity = 0;       // instances the staging vector holds
@@ -81,6 +88,14 @@ private:
         // has a third of the leaves enlarged to the same coverage, looks the same at a fraction of the cost: leaves
         // shade one another by clump anyway (see the shadow bias in main.gd).
         std::vector<Bucket> proxy;
+        // Shadow tiles replace the three above for casting: caster[lod] is the LOD whose mesh casts that LOD's
+        // shadow (-1 none), and near instances go into shadows-only buckets per (LOD, world tile), cloned from
+        // tile_proto[lod]. A bucket spanning the whole shadow distance reaches into every cascade; a tile only into
+        // those that cover it. Tiles grow with distance (32, 64, 128 m) like the cascades do.
+        std::vector<int> caster;
+        std::vector<Bucket> tile_proto;
+        std::unordered_map<int64_t, Bucket> tiles;
+        Ref<Material> material;
     };
     struct PlantVariant {
         std::vector<Part> parts;
@@ -104,6 +119,8 @@ private:
     float max_distance_ = 1000;
     float y_min_ = -50, y_max_ = 150;  // vertical extent of an instance above its base, for cell culling
     float fade_ = 0.12f;               // cross-fade band as a fraction of the switch distance
+    bool shadow_tiles_ = false;
+    float shadow_tile_ = 32;
     std::vector<PlantVariant> variants_;
     std::unordered_map<int64_t, std::unique_ptr<Block>> blocks_;
     RID scenario_;
@@ -135,6 +152,8 @@ private:
     void finish();                // main thread: upload
     static void walk_task(int index);
     void push(Bucket& b, const overgrowth::Instance& inst, float fade_code);
+    Bucket& tile(Part& part, int lod, const overgrowth::Instance& inst, float distance);
+    void create(Bucket& b, const Ref<Material>& material, RenderingServer::ShadowCastingSetting shadows);
     void commit(Bucket& b);
     void free_variant(PlantVariant& v);
     template <typename Fn>
@@ -144,6 +163,7 @@ private:
                 for (Bucket& b : p.buckets) fn(b);
                 for (Bucket& b : p.far) fn(b);
                 for (Bucket& b : p.proxy) fn(b);
+                for (auto& t : p.tiles) fn(t.second);
             }
     }
     void apply_visibility();
