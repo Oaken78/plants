@@ -48,4 +48,8 @@ struct MeshBuffers {
 // LOD 2: clump puffs plus a few large silhouette leaves. LOD 3: merged low-poly puffs only.
 void buildLod(const PlantSet& set, const Params& p, int lod, MeshBuffers& out);
 
+// A coarser variant of the last LOD for far away: clumps merged per mergeCell metres, and stems thinner than
+// minStemRadius dropped (LOD 3 itself uses lod3.mergeCell and 0.07 m).
+void buildFarLod(const PlantSet& set, const Params& p, float mergeCell, float minStemRadius, MeshBuffers& out);
+
 }  // namespace plants

@@ -365,11 +365,8 @@ std::vector<Clump> mergeClumps(const std::vector<Clump>& in, float cell, bool cl
     return out;
 }
 
-}  // namespace
-
-void buildLod(const PlantSet& set, const Params& p, int lod, MeshBuffers& out) {
+void buildWithConfig(const PlantSet& set, const LodConfig& cfg, int lod, MeshBuffers& out) {
     out.clear();
-    const LodConfig cfg = configFor(lod, p);
     if (cfg.tubeSides > 0) {
         std::vector<uint8_t> hasChild(set.nodes.size(), 0);
         for (const StemNode& n : set.nodes)
@@ -400,6 +397,19 @@ void buildLod(const PlantSet& set, const Params& p, int lod, MeshBuffers& out) {
             for (const Clump& c : set.clumps) emitPuff(c, field, cfg.puffLevel, cfg.puffShrink, out);
         }
     }
+}
+
+}  // namespace
+
+void buildLod(const PlantSet& set, const Params& p, int lod, MeshBuffers& out) {
+    buildWithConfig(set, configFor(lod, p), lod, out);
+}
+
+void buildFarLod(const PlantSet& set, const Params& p, float mergeCell, float minStemRadius, MeshBuffers& out) {
+    LodConfig cfg = configFor(kLodCount - 1, p);
+    cfg.mergeCell = mergeCell;
+    cfg.minStemRadius = minStemRadius;
+    buildWithConfig(set, cfg, kLodCount - 1, out);
 }
 
 }  // namespace plants

@@ -1,2 +1,11 @@
 node_modules/
 core/tests/build/
+godot/.godot/
+godot/extension/godot-cpp/
+godot/extension/build/
+# The root .gitignore drops every bin/ folder (.NET builds); the built extension is committed, like web/build.
+!godot/bin/
+godot/bin/*.lib
+godot/bin/*.exp
+godot/bin/*.pdb
+godot/extension/.sconsign.dblite

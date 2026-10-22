@@ -5,11 +5,14 @@ A procedural plant generator that grows **climbing plants (ivy)**, **bushes** an
 down the walls to the ground. It is styled after "The Last Signal" concept sheet: lush ivy draping over
 weathered concrete, cauliflower-shaped foliage masses, white and yellow flowers, blue-tinted shadows and ink lines.
 
-- **Core:** portable C++17 with no dependencies, compiled to WebAssembly today. It is written to become a Godot
-  GDExtension later; see [docs/godot-port.md](docs/godot-port.md).
+- **Core:** portable C++17 with no dependencies. It is compiled to WebAssembly for the web demo and into a Godot
+  GDExtension for the Godot version.
 - **Tech demo:** a three.js fly-through with the proof-of-concept house and three tall apartment towers. Around them
   streams a town of hundreds of overgrown houses and towers, groves of round trees and oaks, thousands of bushes and
   a grass meadow, all on a four-level LOD scheme with dithered cross-fades.
+- **Godot version:** the same demo in Godot 4.7 ([godot/](godot/)). It grows the plants on every core at once, and
+  its native instancer, shadow proxies and an extra far LOD make it faster than the browser version; see
+  [docs/godot-port.md](docs/godot-port.md).
 
 ## Run the demo
 
@@ -76,6 +79,27 @@ To regenerate the house and tower models after editing [tools/make-house.mjs](to
 node tools/make-house.mjs
 ```
 
+### Godot version
+
+The extension in `godot/bin/` is checked in, so Godot 4.7 is all you need. Import the project once, then run it, or
+open `godot/project.godot` in the editor:
+
+```powershell
+godot --path godot --import
+```
+
+```powershell
+godot --path godot
+```
+
+To rebuild the extension (needs Visual Studio's C++ compiler and Python; it fetches godot-cpp and SCons itself):
+
+```powershell
+./tools/build-godot.ps1
+```
+
+[docs/godot-port.md](docs/godot-port.md) covers the controls, the command-line options and how the port works.
+
 ### Hosted version
 
 The demo is also published as a private Claude artifact; share it from the page's Share menu. To rebuild the page
@@ -95,7 +119,7 @@ does not serve `.glb` files.
 ```
 core/                 portable C++ generator (no dependencies)
   include/plants/
-    api.h             plain C API: the only surface the web demo (and a future GDExtension) uses
+    api.h             plain C API: the only surface the web demo and the Godot extension use
     params.h          every tunable as one table (name, default, min, max)
     plant_set.h       intermediate representation: stems, leaves, flowers, clumps, blades
     mesh.h            per-LOD vertex streams (24 bytes per vertex)
@@ -106,7 +130,7 @@ core/                 portable C++ generator (no dependencies)
     tree.cpp          trees and oaks: crown, pipe-model skeleton, crowding, ground-seeking roots
     scatter.cpp       where plants start on a host mesh
     shading.cpp       "cloud" normals and occlusion from clumps
-    mesher.cpp        PlantSet -> LOD 0..3 meshes
+    mesher.cpp        PlantSet -> LOD 0..3 meshes (plus a coarser far level on request)
   tests/tests.cpp     determinism, LOD and BVH tests (run under node)
 web/
   index.html          demo page
@@ -119,8 +143,13 @@ web/
   js/flycam.js, js/main.js
   assets/house.glb    proof-of-concept host model (House_LOD0, House_LOD1)
   assets/towers.glb   three apartment towers, 6 to 13 floors (TowerA/B/C, each _LOD0 and _LOD1)
+godot/                Godot 4.7 version (see docs/godot-port.md)
+  extension/src/      GDExtension: PlantGenerator, PlantLayer (instancing), DemoWorld (world.js in C++)
+  scripts/, shaders/  scene setup, UI, and the materials ported from web/js
+  bin/                the built extension
 tools/
   build.ps1           wasm build and tests
+  build-godot.ps1     Godot extension build
   make-house.mjs      generates house.glb and towers.glb (plus their -glb.js copies)
   serve.mjs           static server
 ```

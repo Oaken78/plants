@@ -13,18 +13,22 @@ struct PlantsContext {
     float bounds[kLodCount][6] = {};
 };
 
+static void storeBounds(PlantsContext* ctx, int lod) {
+    const Aabb& b = ctx->lods[lod].bounds;
+    float* o = ctx->bounds[lod];
+    if (b.valid()) {
+        o[0] = b.lo.x; o[1] = b.lo.y; o[2] = b.lo.z;
+        o[3] = b.hi.x; o[4] = b.hi.y; o[5] = b.hi.z;
+    } else {
+        for (int i = 0; i < 6; ++i) o[i] = 0;
+    }
+}
+
 static void buildAllLods(PlantsContext* ctx) {
     finalizeShading(ctx->params, ctx->set);
     for (int lod = 0; lod < kLodCount; ++lod) {
         buildLod(ctx->set, ctx->params, lod, ctx->lods[lod]);
-        const Aabb& b = ctx->lods[lod].bounds;
-        float* o = ctx->bounds[lod];
-        if (b.valid()) {
-            o[0] = b.lo.x; o[1] = b.lo.y; o[2] = b.lo.z;
-            o[3] = b.hi.x; o[4] = b.hi.y; o[5] = b.hi.z;
-        } else {
-            for (int i = 0; i < 6; ++i) o[i] = 0;
-        }
+        storeBounds(ctx, lod);
     }
 }
 
@@ -94,6 +98,12 @@ int plants_make_grass(PlantsContext* ctx, uint32_t seed) {
     growGrassTuft(ctx->params, rng, ctx->set);
     buildAllLods(ctx);
     return int(ctx->set.blades.size());
+}
+
+int plants_rebuild_far_lod(PlantsContext* ctx, float mergeCell, float minStemRadius) {
+    buildFarLod(ctx->set, ctx->params, std::max(mergeCell, 0.1f), minStemRadius, ctx->lods[kLodCount - 1]);
+    storeBounds(ctx, kLodCount - 1);
+    return int(ctx->lods[kLodCount - 1].indices.size() / 3);
 }
 
 int plants_lod_count(void) { return kLodCount; }

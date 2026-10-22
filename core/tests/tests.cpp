@@ -110,6 +110,13 @@ static void testGrowth() {
     const float* b = plants_mesh_bounds(ctx, 0);
     CHECK(b[0] > -22 && b[2] > -22 && b[3] < 22 && b[5] < 22);
 
+    // A coarser far level from the same plants: fewer puffs and stems, same place.
+    const int far = plants_rebuild_far_lod(ctx, 8.0f, 0.15f);
+    std::printf("  far lod (8 m cells, stems over 0.15 m): %d tris\n", far);
+    CHECK(far > 0 && far < prevTris);
+    CHECK(far == plants_mesh_index_count(ctx, 3) / 3);
+    CHECK(plants_mesh_bounds(ctx, 3)[4] < 30.0f);
+
     uint64_t first = hashMesh(ctx, 0);
     plants_grow_on_host(ctx, 42);
     CHECK(hashMesh(ctx, 0) == first);  // deterministic

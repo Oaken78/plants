@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "overgrowth_library_init"
+compatibility_minimum = "4.5"
+reloadable = false
+
+[libraries]
+
+windows.x86_64 = "res://bin/overgrowth.windows.template_release.x86_64.dll"

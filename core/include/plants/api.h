@@ -65,6 +65,11 @@ PLANTS_API int plants_make_tree(PlantsContext* ctx, uint32_t seed, float size, i
 /* A standalone grass tuft at the origin. */
 PLANTS_API int plants_make_grass(PlantsContext* ctx, uint32_t seed);
 
+/* Rebuilds LOD 3 of the current plants as a coarser level for far away, without growing them again: clumps merged
+ * per mergeCell metres instead of lod3.mergeCell, and stems thinner than minStemRadius dropped (LOD 3 keeps those
+ * above 0.07 m). It replaces LOD 3 until the next generate call, so read LOD 3 first. Returns the triangle count. */
+PLANTS_API int plants_rebuild_far_lod(PlantsContext* ctx, float mergeCell, float minStemRadius);
+
 PLANTS_API int plants_lod_count(void);
 PLANTS_API int plants_mesh_vertex_count(PlantsContext* ctx, int lod);
 PLANTS_API int plants_mesh_index_count(PlantsContext* ctx, int lod);

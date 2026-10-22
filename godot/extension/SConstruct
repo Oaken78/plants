@@ -1,0 +1,18 @@
+#!/usr/bin/env python
+# Builds the Overgrowth GDExtension: the portable plant core (../../core) plus the Godot bindings in src/.
+# Run it through tools/build-godot.ps1, which fetches godot-cpp first. Object files go to build/, the library to
+# ../bin/, so neither the core nor src/ get build output next to their sources.
+import os
+
+env = SConscript("godot-cpp/SConstruct")
+env.Append(CPPPATH=["src/", "../../core/include"])
+
+variant = "{}.{}".format(env["platform"], env["target"])
+objects = []
+for source in Glob("src/*.cpp") + Glob("../../core/src/*.cpp"):
+    name = os.path.splitext(os.path.basename(str(source)))[0]
+    group = "core" if "core" in str(source.srcnode().dir) else "gd"
+    objects.append(env.SharedObject("build/{}/{}/{}".format(variant, group, name), source))
+
+library = env.SharedLibrary("../bin/overgrowth{}{}".format(env["suffix"], env["SHLIBSUFFIX"]), source=objects)
+Default(library)
